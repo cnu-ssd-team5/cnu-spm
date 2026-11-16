@@ -43,6 +43,12 @@ final class WeekBar {
             String day = date.getDayOfWeek().getDisplayName(TextStyle.SHORT,Locale.KOREAN);
             boolean chosen = date.equals(selectedDate);
             JButton button = Theme.button("<html><center>"+day+"  "+date.getDayOfMonth()+"<br><font size='2'>"+(count==0 ? "일정 없음" : count+"개 일정")+"</font></center></html>",chosen,() -> frame.changeDate(date));
+            if(date.getDayOfWeek()==DayOfWeek.SATURDAY || date.getDayOfWeek()==DayOfWeek.SUNDAY) {
+                button.putClientProperty("calendar.fill",date.getDayOfWeek()==DayOfWeek.SATURDAY?new Color(190,227,250):new Color(250,207,224));
+                button.setForeground(Theme.INK);
+                if(chosen)button.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(Theme.BLUE,2),BorderFactory.createEmptyBorder(7,11,7,11)));
+            }
+            button.putClientProperty("calendar.today",date.equals(LocalDate.now()));
             if (date.equals(LocalDate.now())) button.setToolTipText("오늘");
             weekDays.add(button);
         }

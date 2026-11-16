@@ -24,18 +24,19 @@ final class RouteDialog extends JDialog {
     private final JLabel error = Theme.label(" ", 12, Theme.WARNING);
     private Result result;
 
-    static Result open(JFrame owner, CampusMap data, RouteService routes, PlannerModel model, Building initial) {
-        RouteDialog dialog = new RouteDialog(owner, data, routes, model, initial);
+    static Result open(JFrame owner, CampusMap data, RouteService routes, PlannerModel model, Building initial, Building destination) {
+        RouteDialog dialog = new RouteDialog(owner, data, routes, model, initial, destination);
         dialog.setVisible(true);
         return dialog.result;
     }
 
-    private RouteDialog(JFrame owner, CampusMap data, RouteService routes, PlannerModel model, Building initial) {
+    private RouteDialog(JFrame owner, CampusMap data, RouteService routes, PlannerModel model, Building initial, Building destination) {
         super(owner, "건물 간 최단거리 찾기", true);
         this.routes = routes;
         from = new PlacePicker(data, model);
         to = new PlacePicker(data, model);
         from.select(initial);
+        to.select(destination);
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
 
         JPanel content = new JPanel(new BorderLayout(0, 18));

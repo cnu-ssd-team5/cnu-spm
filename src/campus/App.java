@@ -18,14 +18,12 @@ public final class App {
     public static void main(String[] args) {
         Path root=Path.of(System.getProperty("campus.home",".")).toAbsolutePath().normalize();
         Path osm=null;
-        // 일정은 사용자 홈 폴더에 저장합니다. 프로그램 폴더에 쓰기 권한이 없어도 동작합니다.
-        Path state=Path.of(System.getProperty("user.home"),".cnu-planner","planner-state.xml");
-        boolean defaultState=true;
+        // 자료함과 일정 데이터를 프로젝트 data 폴더에 모아 보관합니다.
+        Path state=root.resolve("data/planner-state.xml");
         for(int i=0;i<args.length;i++) {
             if(i+1<args.length && args[i].equals("--osm"))osm=root.resolve(args[++i]).normalize();
             else if(i+1<args.length && args[i].equals("--state")) {
                 state=root.resolve(args[++i]).normalize();
-                defaultState=false;
             } else {
                 System.err.println("Usage: campus.App [--osm file.osm] [--state planner-state.xml]");
                 return;
@@ -34,7 +32,6 @@ public final class App {
         Theme.configureLookAndFeel();
         try {
             Files.createDirectories(state.getParent());
-            if(defaultState)copyOldState(root.resolve("data/planner-state.xml"),state);
             FileChannel channel = FileChannel.open(state.resolveSibling(state.getFileName()+".lock"),
                     StandardOpenOption.CREATE, StandardOpenOption.WRITE);
             FileLock lock = channel.tryLock();
@@ -50,7 +47,13 @@ public final class App {
             RouteService routes=new RouteService(map);
             PlannerModel model=PlannerStore.load(state);
             Path statePath=state;
-            SwingUtilities.invokeLater(() -> new MainFrame(map,routes,model,statePath).setVisible(true));
+            SwingUtilities.invokeLater(() -> {
+                try { new MainFrame(map,routes,model,statePath).setVisible(true); }
+                catch(IOException ex) {
+                    try { lock.release();channel.close(); } catch(IOException ignored) { }
+                    JOptionPane.showMessageDialog(null,ex.getMessage(),"자료함 시작 오류",JOptionPane.ERROR_MESSAGE);
+                }
+            });
         } catch(Exception ex) {
             Path statePath=state;
             System.err.println("Campus planner startup failed: "+ex.getMessage());
@@ -60,8 +63,4 @@ public final class App {
         }
     }
 
-    // 예전 버전은 프로젝트의 data 폴더에 저장했습니다. 처음 한 번만 새 위치로 복사합니다.
-    private static void copyOldState(Path old, Path state) throws IOException {
-        if(Files.isRegularFile(old) && !Files.exists(state))Files.copy(old,state);
-    }
 }

@@ -16,6 +16,9 @@ import campus.service.DayPlanService.Leg;
 
 final class MapPanel extends JPanel {
     private final CampusMap data;
+    private java.util.function.Function<Building,JPopupMenu> routeMenu;
+    void setRouteMenu(java.util.function.Function<Building,JPopupMenu> menu){routeMenu=menu;}
+    private campus.folder.FolderModule folders;
     private final PlannerModel model;
     private final Consumer<Building> selection;
     private final double longitudeScale;
@@ -45,7 +48,8 @@ final class MapPanel extends JPanel {
         ToolTipManager.sharedInstance().registerComponent(this);
         MouseAdapter mouse = new MouseAdapter() {
             @Override public void mousePressed(MouseEvent e) {
-                dragOrigin = e.getPoint();
+                showMenu(e);
+                dragOrigin = SwingUtilities.isLeftMouseButton(e)?e.getPoint():null;
                 dragging = false;
             }
             @Override public void mouseDragged(MouseEvent e) {
@@ -59,7 +63,8 @@ final class MapPanel extends JPanel {
                 repaint();
             }
             @Override public void mouseReleased(MouseEvent e) {
-                if (!dragging) {
+                showMenu(e);
+                if (SwingUtilities.isLeftMouseButton(e) && !dragging) {
                     Building hit = hit(e.getPoint());
                     if (hit != null) selection.accept(hit);
                 }
@@ -74,6 +79,12 @@ final class MapPanel extends JPanel {
         addMouseWheelListener(mouse);
     }
 
+    private void showMenu(MouseEvent e) {
+        if(!e.isPopupTrigger()||routeMenu==null)return;
+        Building building=hit(e.getPoint());
+        if(building!=null)routeMenu.apply(building).show(this,e.getX(),e.getY());
+    }
+
     void setOccurrences(List<Occurrence> occurrences, List<Leg> legs) {
         active = occurrences.stream().filter(o -> !o.canceled()).toList();
         this.legs = legs;
@@ -81,6 +92,11 @@ final class MapPanel extends JPanel {
     }
 
     List<Leg> legs() { return legs; }
+    void connectFolders(campus.folder.FolderModule folders) {
+        this.folders=folders;
+        folders.attach(this, this::hit, building -> point(building.center()));
+    }
+
 
     void setSearchRoute(Building from, Building to, Route route) {
         searchFrom = Objects.requireNonNull(from);
@@ -165,7 +181,7 @@ final class MapPanel extends JPanel {
 
     @Override public String getToolTipText(MouseEvent event) {
         Building building = hit(event.getPoint());
-        return building == null ? null : building.name() + (model.isFavorite(building.id()) ? " · 즐겨찾기" : " · 클릭하여 선택");
+        return building==null?null:folders==null?building.name():folders.folderTooltip(building);
     }
 
     @Override protected void paintComponent(Graphics graphics) {

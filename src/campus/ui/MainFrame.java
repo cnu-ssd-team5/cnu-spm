@@ -29,11 +29,13 @@ public final class MainFrame extends JFrame {
     private final PlannerModel model;
     private final Path statePath;
     private final MapPanel map;
+    private final campus.folder.FolderModule folders;
     private final WeekBar week;
     private final PlacesPanel places;
     private final SchedulePanel daily;
     private LocalDate selectedDate = LocalDate.now();
     private Building selectedBuilding;
+    private Building routeFrom,routeTo;
     private final JLabel mapTitle = Theme.heading("하루의 지도", 17);
     private final JLabel mapSubtitle = Theme.label(" ", 12, Theme.MUTED);
     private final JPanel searchRouteInfo = Theme.transparent(new BorderLayout(10, 5));
@@ -46,7 +48,7 @@ public final class MainFrame extends JFrame {
     private final javax.swing.Timer noteTimer;
     private boolean unsaved;
 
-    public MainFrame(CampusMap data, RouteService routes, PlannerModel model, Path statePath) {
+    public MainFrame(CampusMap data, RouteService routes, PlannerModel model, Path statePath) throws IOException {
         super("CNU 캠퍼스 플래너 · 전남대학교 광주캠퍼스");
         this.data = data;
         this.routes = routes;
@@ -54,6 +56,10 @@ public final class MainFrame extends JFrame {
         this.model = model;
         this.statePath = statePath;
         map = new MapPanel(data, model, this::selectBuilding);
+        folders = campus.folder.FolderModule.openProject(Path.of(System.getProperty("campus.home", ".")), data, model);
+        try { folders.syncSchedules(); } catch(IOException ex) { folders.close();throw ex; }
+        map.connectFolders(folders);
+        map.setRouteMenu(this::routeMenu);
         week = new WeekBar(this, model);
         places = new PlacesPanel(this, data, model);
         daily = new SchedulePanel(this, data, model);
@@ -62,8 +68,11 @@ public final class MainFrame extends JFrame {
         setDefaultCloseOperation(DO_NOTHING_ON_CLOSE);
         addWindowListener(new WindowAdapter() {
             @Override public void windowClosing(WindowEvent e) {
+                if(folders.isBusy()) { JOptionPane.showMessageDialog(MainFrame.this,"파일 작업이 끝난 뒤 닫아 주세요.");return; }
                 noteTimer.stop();
                 if (unsaved && !persist()) return;
+                try { folders.close(); }
+                catch(IOException ex) { JOptionPane.showMessageDialog(MainFrame.this,ex.getMessage());return; }
                 dispose();
             }
         });
@@ -114,10 +123,21 @@ public final class MainFrame extends JFrame {
         header.add(brand, BorderLayout.WEST);
         JPanel actions = Theme.transparent(new FlowLayout(FlowLayout.RIGHT, 9, 6));
         actions.add(Theme.button("최단거리 찾기", false, this::findRoute));
-        actions.add(Theme.button("고정 시간표 추가", false, () -> edit(null, true)));
+        actions.add(Theme.button("주간 시간표", false, this::showTimetable));
         actions.add(Theme.button("+ 일일 일정 추가", true, () -> edit(null, false)));
         header.add(actions, BorderLayout.EAST);
         return header;
+    }
+
+    private void showTimetable() {
+        if(folders.isBusy())return;
+        folders.closePopup();
+        new campus.timetable.TimetableDialog(this,data,model,()->{
+            unsaved=true;
+            boolean saved=persist();
+            refresh();
+            return saved;
+        }).setVisible(true);
     }
 
     private JPanel mapCard() {
@@ -128,6 +148,7 @@ public final class MainFrame extends JFrame {
         titles.add(mapSubtitle);
         top.add(titles,BorderLayout.WEST);
         JPanel controls = Theme.transparent(new FlowLayout(FlowLayout.RIGHT,5,0));
+        controls.add(folders.searchButton());
         controls.add(Theme.button("-",false,() -> map.zoom(1/1.3)));
         controls.add(Theme.button("+",false,() -> map.zoom(1.3)));
         controls.add(Theme.button("맞춤",false,map::fit));
@@ -204,9 +225,34 @@ public final class MainFrame extends JFrame {
                         + (unavailable > 0 ? " · 일부 경로 없음" : ""));
     }
 
+    JPopupMenu routeMenu(Building building) {
+        JPopupMenu menu=new JPopupMenu();
+        JMenuItem from=new JMenuItem("출발지로 설정");
+        from.addActionListener(e->{routeFrom=building;routeTo=null;showScheduleMap();folders.closePopup();selectBuilding(building);mapSubtitle.setText("출발: "+building.name()+" · 도착 건물을 우클릭하세요");});
+        menu.add(from);
+        if(routeFrom!=null&&!routeFrom.id().equals(building.id())) {
+            JMenuItem to=new JMenuItem("도착지로 설정");
+            to.addActionListener(e->{routeTo=building;folders.closePopup();showRoute(new RouteDialog.Result(routeFrom,routeTo,routes.route(routeFrom,routeTo)));});menu.add(to);
+        }
+        if(routeFrom!=null) {
+            JMenuItem reset=new JMenuItem("출발·도착 선택 해제");reset.addActionListener(e->{routeFrom=null;routeTo=null;showScheduleMap();});menu.add(reset);
+        }
+        menu.addSeparator();
+        JMenuItem create=new JMenuItem("폴더 생성");
+        create.setEnabled(!folders.hasFolder(building)&&!folders.isBusy());
+        create.addActionListener(e->folders.createFolder(this,building));
+        menu.add(create);
+        return menu;
+    }
+
     private void findRoute() {
-        RouteDialog.Result result = RouteDialog.open(this, data, routes, model, selectedBuilding);
+        RouteDialog.Result result = RouteDialog.open(this, data, routes, model, routeFrom==null?selectedBuilding:routeFrom, routeTo);
         if (result == null) return;
+        showRoute(result);
+    }
+
+    private void showRoute(RouteDialog.Result result) {
+        routeFrom=result.from();routeTo=result.to();
         searchedRoute = result;
         map.setSearchRoute(result.from(), result.to(), result.route());
         map.fit();
@@ -270,6 +316,7 @@ public final class MainFrame extends JFrame {
     private boolean persist() {
         noteTimer.stop();
         try {
+            folders.syncSchedules();
             PlannerStore.save(statePath,model);
             unsaved=false;
             saveStatus.setForeground(Theme.MUTED);

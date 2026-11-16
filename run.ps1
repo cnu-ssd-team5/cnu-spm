@@ -1,4 +1,5 @@
 ﻿param(
+    [switch] $CompileOnly,
     [Parameter(ValueFromRemainingArguments = $true)]
     [string[]] $AppArguments = @()
 )
@@ -63,11 +64,13 @@ try {
 
     $classDir = Join-Path $projectRoot 'build/classes'
     # 이전 빌드의 클래스 파일(옮기거나 지운 클래스)이 남지 않도록 매번 새로 만듭니다.
+    if ([IO.Path]::GetFullPath($classDir) -ne [IO.Path]::GetFullPath([IO.Path]::Combine($projectRoot, 'build', 'classes'))) { throw 'Invalid build directory' }
     if (Test-Path -LiteralPath $classDir) {
         Remove-Item -LiteralPath $classDir -Recurse -Force
     }
     [void] [IO.Directory]::CreateDirectory($classDir)
-    $sources = @(Get-ChildItem -LiteralPath (Join-Path $projectRoot 'src') -Filter '*.java' -File -Recurse |
+    $sourceRoots = @((Join-Path $projectRoot 'src'))
+    $sources = @(Get-ChildItem -LiteralPath $sourceRoots -Filter '*.java' -File -Recurse |
         ForEach-Object { $_.FullName })
     if ($sources.Count -eq 0) {
         throw 'src 폴더에서 Java 소스 파일을 찾을 수 없습니다.'
@@ -81,6 +84,7 @@ try {
     Get-ChildItem -LiteralPath (Join-Path $projectRoot 'resources') |
         Copy-Item -Destination $classDir -Recurse -Force
 
+    if ($CompileOnly) { exit 0 }
     & $java "-Dcampus.home=$projectRoot" '-cp' $classDir 'campus.App' @AppArguments
     exit $LASTEXITCODE
 } catch {
