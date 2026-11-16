@@ -1,4 +1,4 @@
-package campus;
+package campus.ui;
 
 import java.awt.BorderLayout;
 import java.awt.Color;
@@ -9,6 +9,9 @@ import java.util.Locale;
 import javax.swing.*;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
+import campus.model.PlannerModel;
+import campus.service.Place;
+import campus.service.PlaceCatalog;
 
 /** Shared place search for schedules and independent route searches. */
 final class PlacePicker extends JPanel {

@@ -1,4 +1,4 @@
-package campus;
+package campus.ui;
 
 import java.awt.*;
 import java.awt.event.*;
@@ -9,8 +9,11 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
 import javax.swing.*;
-import campus.PlannerModel.Event;
-import campus.PlannerModel.Occurrence;
+import campus.model.PlannerModel.Event;
+import campus.model.PlannerModel.Occurrence;
+import campus.model.PlannerModel;
+import campus.service.Place;
+import campus.service.PlaceCatalog;
 
 final class DailyTimetablePanel extends JPanel {
     private static final int HOUR_HEIGHT = 54;

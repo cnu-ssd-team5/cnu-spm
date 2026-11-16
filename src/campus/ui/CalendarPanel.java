@@ -1,4 +1,4 @@
-package campus;
+package campus.ui;
 
 import java.awt.*;
 import java.time.*;
@@ -6,7 +6,8 @@ import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.function.Consumer;
 import javax.swing.*;
-import campus.PlannerModel.Deadline;
+import campus.model.PlannerModel.Deadline;
+import campus.model.PlannerModel;
 
 final class CalendarPanel extends JPanel {
     private static final Color DUE_COLOR = new Color(196, 54, 54);

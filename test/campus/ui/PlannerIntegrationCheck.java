@@ -1,4 +1,4 @@
-package campus;
+package campus.ui;
 
 import java.awt.Color;
 import java.awt.Component;
@@ -29,9 +29,17 @@ import javax.swing.JPanel;
 import javax.swing.JTextArea;
 import javax.swing.JTextField;
 import javax.swing.SwingUtilities;
-import campus.PlannerModel.Deadline;
-import campus.PlannerModel.Event;
-import campus.PlannerModel.Occurrence;
+import campus.map.MapData;
+import campus.map.RouteService;
+import campus.model.PlannerModel.Deadline;
+import campus.model.PlannerModel.Event;
+import campus.model.PlannerModel.Occurrence;
+import campus.model.PlannerModel;
+import campus.model.PlannerStore;
+import campus.service.DayPlanService.Leg;
+import campus.service.Place;
+import campus.service.PlaceCatalog;
+import campus.service.ScheduleSlot;
 
 /** Hidden Swing integration checks using the actual campus OSM extract and isolated state. */
 public final class PlannerIntegrationCheck {
@@ -42,13 +50,14 @@ public final class PlannerIntegrationCheck {
 
     public static void main(String[] args) throws Exception {
         Path root = Path.of(args.length == 0 ? "." : args[0]).toAbsolutePath();
-        MapData data = MapData.load(root.resolve("data/chonnam-campus.osm"));
+        MapData data = MapData.load(root.resolve("resources/map/chonnam-campus.osm"));
+        RouteService routes = new RouteService(data);
         Path temporary = Files.createTempDirectory("campus-integration-check-");
         AtomicReference<Throwable> failure = new AtomicReference<>();
         SwingUtilities.invokeAndWait(() -> {
             try {
-                CampusPlanner.configureLookAndFeel();
-                runChecks(data, temporary);
+                Theme.configureLookAndFeel();
+                runChecks(data, routes, temporary);
             } catch (Throwable exception) {
                 failure.set(exception);
             } finally {
@@ -65,9 +74,9 @@ public final class PlannerIntegrationCheck {
         }
     }
 
-    private static void runChecks(MapData data, Path temporary) throws Exception {
+    private static void runChecks(MapData data, RouteService routes, Path temporary) throws Exception {
         PlannerModel model = new PlannerModel();
-        PlaceCatalog places = new PlaceCatalog(data, model);
+        PlaceCatalog places = new PlaceCatalog(routes, model);
         Place building = places.namedPlaces().stream().filter(place -> place.name().contains("만들마루")).findFirst().orElseThrow();
         Place other = places.namedPlaces().stream().filter(place -> place.name().contains("G&R")).findFirst().orElseThrow();
         Place unnamed = places.all().stream().filter(place -> !place.named()).findFirst().orElseThrow();
@@ -76,7 +85,7 @@ public final class PlannerIntegrationCheck {
         check(places.namedPlaces().stream().noneMatch(place -> place.id().equals(unnamed.id())), "unnamed building hidden from listed places");
         places.rename(unnamed, "검증용 건물");
         check(places.namedPlaces().size() == namedBefore + 1 && places.find(unnamed.id()).name().equals("검증용 건물"), "naming adds building to visible places");
-        MapData.Route road = places.route(building, other);
+        RouteService.Route road = places.route(building, other);
         check(road.reachable() && road.points().size() > 1, "real OSM route available");
         Place pin = places.addPin(road.points().get(road.points().size() / 2), "검증용 핀");
         check(pin.pin() && pin.id().startsWith("pin:") && places.namedPlaces().contains(pin), "pin appears as named place");
@@ -135,7 +144,7 @@ public final class PlannerIntegrationCheck {
         sidebarNote.setText("작성 중인 일일 메모");
         check(model.dayNote(DATE).equals("작성 중인 일일 메모"), "sidebar memo updates model immediately");
 
-        List<CampusMapPanel.Leg> dailyLegs = map.legs();
+        List<Leg> dailyLegs = map.legs();
         int[] before = render(map);
         map.setSearchRoute(pin, building, places.route(pin, building));
         check(map.isSearchRouteActive() && map.legs().equals(dailyLegs), "independent search preserves scheduled legs");
@@ -160,7 +169,7 @@ public final class PlannerIntegrationCheck {
         check(deck.selectedView() == 3, "workspace previous wraps cyclically");
         check(!next.isContentAreaFilled() && !previous.isContentAreaFilled(), "navigation arrows use custom translucent paint");
 
-        PlannerFrame frame = new PlannerFrame(data, model, temporary.resolve("state.xml"), temporary);
+        PlannerFrame frame = new PlannerFrame(data, routes, model, temporary.resolve("state.xml"), temporary);
         try {
             setField(frame, "selectedDate", DATE);
             invoke(frame, "refresh");

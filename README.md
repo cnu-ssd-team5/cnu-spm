@@ -12,7 +12,7 @@ Windows에서 `run.cmd`를 더블클릭합니다. PowerShell에서는 다음 명
 .\run.ps1
 ```
 
-실행 스크립트는 `src/campus/*.java`를 UTF-8, Java 17 대상으로 컴파일한 뒤 앱을 엽니다. `JAVA_HOME`을 먼저 확인하고, 실행에 문제가 생길 수 있는 Oracle `javapath` 실행 도우미 대신 실제 JDK의 실행 파일을 찾습니다.
+실행 스크립트는 `src` 아래의 모든 `.java` 파일을 UTF-8, Java 17 대상으로 컴파일하고 `resources` 폴더(지도 데이터)를 함께 복사한 뒤 앱을 엽니다. JDK는 `JAVA_HOME`, `PATH`, 흔한 JDK 설치 폴더(`Program Files\Java` 등) 순서로 찾고, Oracle `javapath` 실행 도우미는 마지막 수단으로만 사용합니다.
 
 다른 OSM 파일이나 별도 개인 일정 파일로 실행하려면 경로를 지정할 수 있습니다.
 
@@ -20,7 +20,39 @@ Windows에서 `run.cmd`를 더블클릭합니다. PowerShell에서는 다음 명
 .\run.ps1 --osm "C:\maps\campus.osm" --state "C:\plans\my-planner.xml"
 ```
 
-기본 지도는 `data/chonnam-campus.osm`, 개인 일정 저장 파일은 `data/planner-state.xml`입니다. 파일 경로는 프로젝트 폴더를 기준으로 해석합니다. 처음 실행하면 일정과 즐겨찾기가 비어 있습니다.
+- 기본 지도: 프로그램에 포함된 `resources/map/chonnam-campus.osm` (실행 위치와 상관없이 읽습니다)
+- 개인 일정 저장 파일: 사용자 홈 폴더의 `.cnu-planner/planner-state.xml` (예: `C:\Users\이름\.cnu-planner\`)
+- 과목 자료 폴더: 같은 폴더의 `.cnu-planner/materials/`
+- 예전 버전이 프로젝트의 `data/planner-state.xml`, `materials/`에 저장한 파일은 처음 실행할 때 새 위치로 한 번 복사합니다.
+- `--osm`, `--state`의 상대 경로는 프로젝트 폴더를 기준으로 해석합니다. 처음 실행하면 일정과 즐겨찾기가 비어 있습니다.
+
+## 코드 구조
+
+```
+src/campus/
+ ├─ CampusPlanner.java  시작점 (지도·일정 불러오기, 메인 창 열기)
+ ├─ model/    PlannerModel (일정, 과제, 핀, 메모), PlannerStore (XML 저장)
+ ├─ map/      MapData (OSM 읽기, 건물), WalkGraph (보행 그래프), RouteService (다익스트라)
+ ├─ service/  PlaceCatalog, Place (건물·핀 목록), DayPlanService (일정 사이 이동 구간), ScheduleSlot
+ └─ ui/       PlannerFrame과 각 화면 패널, 대화상자, Theme
+test/campus/
+ ├─ model/    PlannerModelCheck
+ └─ ui/       PlacesCheck, SecondaryViewsCheck, PlannerIntegrationCheck
+resources/map/  전남대 OSM 지도 데이터와 출처
+```
+
+`model`, `map`, `service`에는 Swing 코드를 넣지 않습니다. 클래스 관계는 `docs/design.md`에 있습니다.
+
+테스트는 프로젝트 폴더의 PowerShell에서 다음처럼 실행합니다. `ui` 테스트는 화면이 있는 환경에서 실행해야 합니다.
+
+```powershell
+javac -encoding UTF-8 -d build\classes (Get-ChildItem src -Recurse -Filter *.java).FullName
+javac -encoding UTF-8 -cp build\classes -d build\test (Get-ChildItem test -Recurse -Filter *.java).FullName
+java -cp "build\classes;build\test" campus.model.PlannerModelCheck .
+java -cp "build\classes;build\test" campus.ui.PlacesCheck .
+java -cp "build\classes;build\test" campus.ui.SecondaryViewsCheck .
+java -cp "build\classes;build\test" campus.ui.PlannerIntegrationCheck .
+```
 
 ## 사용
 
@@ -37,11 +69,11 @@ Windows에서 `run.cmd`를 더블클릭합니다. PowerShell에서는 다음 명
 
 지도는 OSM의 건물, 도로, 보행로와 지형 도형을 직접 그립니다. 기존에 만든 캠퍼스 PNG는 사용하지 않습니다. 이름이 등록되지 않은 건물은 OSM ID를 포함한 이름으로 구분합니다.
 
-보행 그래프는 길의 굴곡 좌표를 보존하면서 차수가 2인 중간 정점을 압축합니다. 압축 후 정점이 900개 이하면 플로이드–워셜을 사용하고, 더 크면 다익스트라로 최단 경로를 구합니다. 포함된 전남대 OSM 데이터는 이 기준보다 커서 다익스트라를 사용합니다. OSM에 출입구가 있으면 연결하고, 없으면 건물 외곽과 가까운 보행로 사이의 짧은 연결을 추정합니다. 연결을 만들 수 없는 건물은 경로를 표시할 수 없다는 안내를 보여줍니다.
+보행 그래프는 길의 굴곡 좌표를 보존하면서 차수가 2인 중간 정점을 압축합니다. 압축한 그래프에서 다익스트라로 최단 경로를 구합니다. OSM에 출입구가 있으면 연결하고, 없으면 건물 외곽과 가까운 보행로 사이의 짧은 연결을 추정합니다. 연결을 만들 수 없는 건물은 경로를 표시할 수 없다는 안내를 보여줍니다.
 
 예상 보행 시간은 계산한 거리를 초당 1.3m의 보행 속도로 환산합니다. 계단, 경사, 신호 대기, 실내 이동 시간은 별도로 계산하지 않습니다. OSM에 없는 강의실·층 정보나 출입구 운영 시간은 사용자 메모로 보완할 수 있습니다. 18시 일괄 폐쇄처럼 실제 데이터에 없는 통행 제한을 자동으로 적용하지 않습니다.
 
-지도 데이터의 출처, 라이선스와 추출 범위는 `data/README.md`에 기록합니다. 지도 데이터의 저작자는 OpenStreetMap 기여자이며, ODbL 라이선스가 적용됩니다.
+지도 데이터의 출처, 라이선스와 추출 범위는 `resources/map/README.md`에 기록합니다. 지도 데이터의 저작자는 OpenStreetMap 기여자이며, ODbL 라이선스가 적용됩니다.
 
 - [OpenStreetMap 저작권 및 이용 안내](https://www.openstreetmap.org/copyright)
 - [Open Database License 1.0](https://opendatacommons.org/licenses/odbl/1-0/)

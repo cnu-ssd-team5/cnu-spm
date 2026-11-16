@@ -1,32 +1,42 @@
 package campus;
 
-import java.awt.Font;
 import java.io.IOException;
 import java.nio.channels.FileChannel;
 import java.nio.channels.FileLock;
 import java.nio.file.*;
-import java.util.Enumeration;
+import java.util.stream.Stream;
 import javax.swing.*;
-import javax.swing.plaf.FontUIResource;
+import campus.map.MapData;
+import campus.map.RouteService;
+import campus.model.PlannerModel;
+import campus.model.PlannerStore;
+import campus.ui.PlannerFrame;
+import campus.ui.Theme;
 
 public final class CampusPlanner {
     private CampusPlanner() { }
 
     public static void main(String[] args) {
         Path root=Path.of(System.getProperty("campus.home",".")).toAbsolutePath().normalize();
-        Path osm=root.resolve("data/chonnam-campus.osm");
-        Path state=root.resolve("data/planner-state.xml");
+        // 일정과 과목 자료는 사용자 홈 폴더에 둡니다. 프로그램 폴더에 쓰기 권한이 없어도 동작합니다.
+        Path home=Path.of(System.getProperty("user.home"),".cnu-planner");
+        Path osm=null;
+        Path state=home.resolve("planner-state.xml");
+        boolean defaultState=true;
         for(int i=0;i<args.length;i++) {
             if(i+1<args.length && args[i].equals("--osm"))osm=root.resolve(args[++i]).normalize();
-            else if(i+1<args.length && args[i].equals("--state"))state=root.resolve(args[++i]).normalize();
-            else {
+            else if(i+1<args.length && args[i].equals("--state")) {
+                state=root.resolve(args[++i]).normalize();
+                defaultState=false;
+            } else {
                 System.err.println("Usage: campus.CampusPlanner [--osm file.osm] [--state planner-state.xml]");
                 return;
             }
         }
-        configureLookAndFeel();
+        Theme.configureLookAndFeel();
         try {
             Files.createDirectories(state.getParent());
+            if(defaultState)copyOldFiles(root,home);
             FileChannel channel = FileChannel.open(state.resolveSibling(state.getFileName()+".lock"),
                     StandardOpenOption.CREATE, StandardOpenOption.WRITE);
             FileLock lock = channel.tryLock();
@@ -38,10 +48,11 @@ public final class CampusPlanner {
                 try { lock.release(); channel.close(); }
                 catch(IOException ignored) { }
             },"planner-state-lock"));
-            MapData map=MapData.load(osm);
+            MapData map=osm==null ? MapData.loadBundled() : MapData.load(osm);
+            RouteService routes=new RouteService(map);
             PlannerModel model=PlannerStore.load(state);
             Path statePath=state;
-            SwingUtilities.invokeLater(() -> new PlannerFrame(map,model,statePath,root).setVisible(true));
+            SwingUtilities.invokeLater(() -> new PlannerFrame(map,routes,model,statePath,home).setVisible(true));
         } catch(Exception ex) {
             Path statePath=state;
             System.err.println("Campus planner startup failed: "+ex.getMessage());
@@ -51,17 +62,18 @@ public final class CampusPlanner {
         }
     }
 
-    static void configureLookAndFeel() {
-        try { UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName()); }
-        catch(Exception ignored) { /* Swing 기본 LookAndFeel로 실행합니다. */ }
-        FontUIResource font=new FontUIResource(Theme.font(13,Font.PLAIN));
-        Enumeration<Object> keys=UIManager.getDefaults().keys();
-        while(keys.hasMoreElements()) {
-            Object key=keys.nextElement();
-            if(UIManager.get(key) instanceof FontUIResource)UIManager.put(key,font);
+    // 예전 버전은 프로젝트의 data, materials 폴더에 저장했습니다. 새 위치에 없을 때 한 번만 복사합니다.
+    private static void copyOldFiles(Path root, Path home) throws IOException {
+        Path oldState=root.resolve("data/planner-state.xml"), state=home.resolve("planner-state.xml");
+        if(Files.isRegularFile(oldState) && !Files.exists(state))Files.copy(oldState,state);
+        Path oldMaterials=root.resolve("materials"), materials=home.resolve("materials");
+        if(!Files.isDirectory(oldMaterials) || Files.exists(materials))return;
+        try(Stream<Path> files=Files.walk(oldMaterials)) {
+            for(Path source : files.toList()) {
+                Path target=materials.resolve(oldMaterials.relativize(source).toString());
+                if(Files.isDirectory(source))Files.createDirectories(target);
+                else Files.copy(source,target);
+            }
         }
-        UIManager.put("ToolTip.font",Theme.font(12,Font.PLAIN));
-        UIManager.put("OptionPane.messageFont",Theme.font(13,Font.PLAIN));
-        UIManager.put("Button.font",Theme.font(12,Font.PLAIN));
     }
 }

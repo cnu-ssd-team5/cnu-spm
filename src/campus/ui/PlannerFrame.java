@@ -1,4 +1,4 @@
-package campus;
+package campus.ui;
 
 import java.awt.*;
 import java.awt.event.*;
@@ -14,12 +14,19 @@ import javax.swing.*;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import javax.swing.filechooser.FileNameExtensionFilter;
-import campus.PlannerModel.Deadline;
-import campus.PlannerModel.Event;
-import campus.PlannerModel.Occurrence;
+import campus.map.MapData;
+import campus.map.RouteService;
+import campus.model.PlannerModel.Deadline;
+import campus.model.PlannerModel.Event;
+import campus.model.PlannerModel.Occurrence;
+import campus.model.PlannerModel;
+import campus.model.PlannerStore;
+import campus.service.Place;
+import campus.service.PlaceCatalog;
+import campus.service.ScheduleSlot;
 
 /** Coordinates views and user actions; map data and persisted state stay separate. */
-final class PlannerFrame extends JFrame {
+public final class PlannerFrame extends JFrame {
     private final MapData data;
     private final PlannerModel model;
     private final PlaceCatalog places;
@@ -54,16 +61,12 @@ final class PlannerFrame extends JFrame {
     private final JLabel routeNote = Theme.label(" ", 10, Theme.MUTED);
     private final JLabel saveStatus = Theme.label(" ", 10, Theme.MUTED);
 
-    PlannerFrame(MapData data, PlannerModel model, Path statePath) {
-        this(data, model, statePath, Path.of(System.getProperty("campus.home", ".")).toAbsolutePath());
-    }
-
-    PlannerFrame(MapData data, PlannerModel model, Path statePath, Path appRoot) {
+    public PlannerFrame(MapData data, RouteService routes, PlannerModel model, Path statePath, Path homeDir) {
         super("전남대학교 일정");
         this.data = data;
         this.model = model;
         this.statePath = statePath;
-        places = new PlaceCatalog(data, model);
+        places = new PlaceCatalog(routes, model);
         noteTimer = new javax.swing.Timer(600, event -> persist());
         noteTimer.setRepeats(false);
         map = new CampusMapPanel(data, model, places, this::selectPlace, this::activatePlace, this::createPin);
@@ -71,7 +74,7 @@ final class PlannerFrame extends JFrame {
                 date -> { changeDate(date); editDeadline(null); }, this::editDeadline);
         timetable = new DailyTimetablePanel(model, places, event -> editEvent(event, null),
                 time -> editEvent(null, ScheduleSlot.after(time)));
-        materials = new CourseMaterialsPanel(model, appRoot.resolve("materials"), event -> editEvent(event, null));
+        materials = new CourseMaterialsPanel(model, homeDir.resolve("materials"), event -> editEvent(event, null));
         schedule = new SchedulePanel(model, places, new SchedulePanel.Actions() {
             public void add(ScheduleSlot slot) { editEvent(null, slot); }
             public void edit(Event event) { editEvent(event, null); }
@@ -401,7 +404,7 @@ final class PlannerFrame extends JFrame {
         routeDetails.setVisible(searchedRoute != null);
         mapSummary.setForeground(Theme.MUTED);
         if (searchedRoute != null) {
-            MapData.Route route = searchedRoute.route();
+            RouteService.Route route = searchedRoute.route();
             routeFrom.setText("출발  " + searchedRoute.from().name());
             routeTo.setText("도착  " + searchedRoute.to().name());
             routeNote.setText(route.message().contains("추정") ? "보행로까지의 연결 일부 추정" : " ");
@@ -419,7 +422,7 @@ final class PlannerFrame extends JFrame {
     }
 
     private String distanceText(double meters) {
-        int minutes = (int) Math.ceil(meters / (CampusMapPanel.WALKING_METERS_PER_SECOND * 60));
+        int minutes = (int) Math.ceil(meters / (RouteService.WALKING_METERS_PER_SECOND * 60));
         return String.format(Locale.ROOT, "%,.0f m · 약 %d분", meters, minutes);
     }
 

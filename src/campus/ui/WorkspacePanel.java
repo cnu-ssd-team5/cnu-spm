@@ -1,4 +1,4 @@
-package campus;
+package campus.ui;
 
 import java.awt.*;
 import java.util.List;

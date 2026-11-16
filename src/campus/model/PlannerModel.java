@@ -1,4 +1,4 @@
-package campus;
+package campus.model;
 
 import java.time.DayOfWeek;
 import java.time.LocalDate;

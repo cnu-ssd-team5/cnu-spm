@@ -1,10 +1,14 @@
-package campus;
+package campus.ui;
 
 import java.awt.*;
 import javax.swing.*;
+import campus.map.RouteService;
+import campus.model.PlannerModel;
+import campus.service.Place;
+import campus.service.PlaceCatalog;
 
 final class RouteDialog extends JDialog {
-    record Result(Place from, Place to, MapData.Route route) { }
+    record Result(Place from, Place to, RouteService.Route route) { }
 
     private final PlaceCatalog places;
     private final PlacePicker from;

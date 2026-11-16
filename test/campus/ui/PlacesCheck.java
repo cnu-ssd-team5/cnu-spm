@@ -1,4 +1,4 @@
-package campus;
+package campus.ui;
 
 import java.awt.Point;
 import java.awt.event.MouseEvent;
@@ -18,6 +18,12 @@ import javax.swing.DefaultListModel;
 import javax.swing.JComboBox;
 import javax.swing.JList;
 import javax.swing.SwingUtilities;
+import campus.map.MapData;
+import campus.map.RouteService;
+import campus.model.PlannerModel;
+import campus.model.PlannerStore;
+import campus.service.Place;
+import campus.service.PlaceCatalog;
 
 /** Actual OSM place and pin regression checks; never loads personal state. */
 public final class PlacesCheck {
@@ -27,9 +33,10 @@ public final class PlacesCheck {
 
     public static void main(String[] args) throws Exception {
         Path project = Path.of(args.length == 0 ? "." : args[0]);
-        MapData data = MapData.load(project.resolve("data/chonnam-campus.osm"));
+        MapData data = MapData.load(project.resolve("resources/map/chonnam-campus.osm"));
+        RouteService routes = new RouteService(data);
         PlannerModel model = new PlannerModel();
-        PlaceCatalog places = new PlaceCatalog(data, model);
+        PlaceCatalog places = new PlaceCatalog(routes, model);
         int namedCount = places.namedPlaces().size();
         Place unnamed = places.all().stream().filter(place -> !place.named()).findFirst().orElseThrow();
         check(places.all().size() == data.buildings().size(), "all buildings remain selectable");
@@ -43,17 +50,17 @@ public final class PlacesCheck {
         Place building = places.find("w1125544293");
         Place otherBuilding = places.find("w1125468849");
         check(building != null && otherBuilding != null, "actual campus buildings loaded");
-        MapData.Route buildingRoute = places.route(building, otherBuilding);
+        RouteService.Route buildingRoute = places.route(building, otherBuilding);
         check(buildingRoute.reachable(), "existing building routing preserved");
         check(Math.abs(length(buildingRoute.points()) - buildingRoute.meters()) < 0.05,
                 "building route length matches geometry");
 
-        MapData.GeoPoint[] road = actualRoadSegment(data);
+        MapData.GeoPoint[] road = actualRoadSegment(routes);
         Place pin = places.addPin(road[0], "집합 장소");
         Place otherPin = places.addPin(road[1], "과제 모임");
         check(pin.pin() && pin.named() && pin.id().startsWith("pin:"), "named pin created");
         check(places.namedPlaces().size() == namedCount + 3, "pins appear in named list");
-        MapData.Route sameEdge = places.route(pin, otherPin);
+        RouteService.Route sameEdge = places.route(pin, otherPin);
         check(sameEdge.reachable(), "pin to pin route exists");
         check(Math.abs(sameEdge.meters() - MapData.distance(road[0], road[1])) < 0.05,
                 "same-edge pins avoid a detour through a junction");
@@ -62,7 +69,7 @@ public final class PlacesCheck {
         check(sameEdge.points().get(0).equals(road[0])
                 && sameEdge.points().get(sameEdge.points().size() - 1).equals(road[1]),
                 "pin route endpoints match selected coordinates");
-        MapData.Route toBuilding = places.route(pin, building);
+        RouteService.Route toBuilding = places.route(pin, building);
         check(toBuilding.reachable() && places.route(building, pin).reachable(),
                 "pin and building routes work in both directions");
         check(Math.abs(length(toBuilding.points()) - toBuilding.meters()) < 0.05,
@@ -78,7 +85,7 @@ public final class PlacesCheck {
         try {
             PlannerStore.save(state, model);
             PlannerModel loaded = PlannerStore.load(state);
-            PlaceCatalog restored = new PlaceCatalog(data, loaded);
+            PlaceCatalog restored = new PlaceCatalog(routes, loaded);
             check(restored.find(pin.id()) != null, "pin persistence round-trip");
             check(restored.find(unnamed.id()).name().equals("이름 없는 나의 실험실"),
                     "building name persistence round-trip");
@@ -113,7 +120,7 @@ public final class PlacesCheck {
     }
 
     private static void checkMapInput(MapData data, PlannerModel model, PlaceCatalog places,
-                                     Place building, Place pin, MapData.Route toBuilding) throws Exception {
+                                     Place building, Place pin, RouteService.Route toBuilding) throws Exception {
         AtomicReference<Place> selected = new AtomicReference<>();
         AtomicReference<Place> activated = new AtomicReference<>();
         AtomicReference<MapData.GeoPoint> requested = new AtomicReference<>();
@@ -191,18 +198,21 @@ public final class PlacesCheck {
     }
 
     @SuppressWarnings("unchecked")
-    private static MapData.GeoPoint[] actualRoadSegment(MapData data) throws Exception {
-        Field geometryField = MapData.class.getDeclaredField("geometry");
+    private static MapData.GeoPoint[] actualRoadSegment(RouteService routes) throws Exception {
+        Field walkField = RouteService.class.getDeclaredField("walk");
+        walkField.setAccessible(true);
+        Object walk = walkField.get(routes);
+        Field geometryField = walk.getClass().getDeclaredField("geometry");
         geometryField.setAccessible(true);
         Map<Long, List<MapData.GeoPoint>> geometry =
-                (Map<Long, List<MapData.GeoPoint>>) geometryField.get(data);
+                (Map<Long, List<MapData.GeoPoint>>) geometryField.get(walk);
         for (List<MapData.GeoPoint> line : geometry.values()) {
             for (int index = 1; index < line.size(); index++) {
                 MapData.GeoPoint start = line.get(index - 1), end = line.get(index);
                 if (MapData.distance(start, end) < 25) continue;
                 MapData.GeoPoint from = interpolate(start, end, 0.35);
                 MapData.GeoPoint to = interpolate(start, end, 0.65);
-                if (data.route(from, to).reachable()) return new MapData.GeoPoint[]{from, to};
+                if (routes.route(from, to).reachable()) return new MapData.GeoPoint[]{from, to};
             }
         }
         throw new AssertionError("Actual OSM road segment was not found");

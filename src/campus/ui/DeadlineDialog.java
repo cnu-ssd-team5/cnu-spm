@@ -1,11 +1,11 @@
-package campus;
+package campus.ui;
 
 import java.awt.*;
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
 import java.util.UUID;
 import javax.swing.*;
-import campus.PlannerModel.Deadline;
+import campus.model.PlannerModel.Deadline;
 
 final class DeadlineDialog extends JDialog {
     record Result(Deadline deadline, boolean deleted) { }

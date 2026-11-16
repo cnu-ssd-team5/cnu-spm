@@ -1,4 +1,4 @@
-package campus;
+package campus.ui;
 
 import java.awt.*;
 import java.awt.event.MouseAdapter;
@@ -11,9 +11,14 @@ import java.util.Locale;
 import javax.swing.*;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
-import campus.PlannerModel.Deadline;
-import campus.PlannerModel.Event;
-import campus.PlannerModel.Occurrence;
+import campus.model.PlannerModel.Deadline;
+import campus.model.PlannerModel.Event;
+import campus.model.PlannerModel.Occurrence;
+import campus.model.PlannerModel;
+import campus.service.DayPlanService.Leg;
+import campus.service.Place;
+import campus.service.PlaceCatalog;
+import campus.service.ScheduleSlot;
 
 final class SchedulePanel extends JPanel {
     interface Actions {
@@ -70,7 +75,7 @@ final class SchedulePanel extends JPanel {
         });
     }
 
-    void refresh(LocalDate date, List<CampusMapPanel.Leg> legs) {
+    void refresh(LocalDate date, List<Leg> legs) {
         this.date = date;
         refreshing = true;
         try {
@@ -135,7 +140,7 @@ final class SchedulePanel extends JPanel {
         addItem(button, constraints);
     }
 
-    private JLabel routeLabel(CampusMapPanel.Leg leg) {
+    private JLabel routeLabel(Leg leg) {
         String text = leg.route().reachable()
                 ? String.format(Locale.ROOT, "도보 %,.0f m · 약 %d분", leg.route().meters(), leg.minutes())
                 : "경로 없음";

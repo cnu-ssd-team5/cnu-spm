@@ -1,10 +1,13 @@
-package campus;
+package campus.ui;
 
 import java.awt.*;
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
+import javax.swing.plaf.FontUIResource;
+import java.util.Enumeration;
+import java.util.List;
 
-final class Theme {
+public final class Theme {
     static final Color BACKGROUND = new Color(245, 247, 251);
     static final Color INK = new Color(30, 42, 61);
     static final Color MUTED = new Color(106, 119, 137);
@@ -13,10 +16,34 @@ final class Theme {
     static final Color LINE = new Color(225, 231, 240);
     static final Color WARNING = new Color(172, 80, 33);
 
+    // 맑은 고딕이 없는 PC(영문 Windows, Mac, Linux)에서도 한글이 깨지지 않도록 설치된 폰트 중에서 고릅니다.
+    private static final String FONT = pickFont("맑은 고딕", "Malgun Gothic", "Apple SD Gothic Neo", "AppleGothic",
+            "Noto Sans KR", "Noto Sans CJK KR", "NanumGothic", "나눔고딕");
+
     private Theme() { }
 
+    private static String pickFont(String... names) {
+        List<String> installed = List.of(GraphicsEnvironment.getLocalGraphicsEnvironment().getAvailableFontFamilyNames());
+        for (String name : names) if (installed.contains(name)) return name;
+        return Font.DIALOG;
+    }
+
     static Font font(int size, int style) {
-        return new Font("맑은 고딕", style, size);
+        return new Font(FONT, style, size);
+    }
+
+    public static void configureLookAndFeel() {
+        try { UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName()); }
+        catch(Exception ignored) { /* Swing 기본 LookAndFeel로 실행합니다. */ }
+        FontUIResource font=new FontUIResource(font(13,Font.PLAIN));
+        Enumeration<Object> keys=UIManager.getDefaults().keys();
+        while(keys.hasMoreElements()) {
+            Object key=keys.nextElement();
+            if(UIManager.get(key) instanceof FontUIResource)UIManager.put(key,font);
+        }
+        UIManager.put("ToolTip.font",font(12,Font.PLAIN));
+        UIManager.put("OptionPane.messageFont",font(13,Font.PLAIN));
+        UIManager.put("Button.font",font(12,Font.PLAIN));
     }
 
     static JLabel label(String text, int size, Color color) {

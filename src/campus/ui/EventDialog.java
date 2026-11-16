@@ -1,4 +1,4 @@
-package campus;
+package campus.ui;
 
 import java.awt.*;
 import java.time.*;
@@ -7,8 +7,12 @@ import java.time.format.TextStyle;
 import java.util.Locale;
 import java.util.UUID;
 import javax.swing.*;
-import campus.PlannerModel.Category;
-import campus.PlannerModel.Event;
+import campus.model.PlannerModel.Category;
+import campus.model.PlannerModel.Event;
+import campus.model.PlannerModel;
+import campus.service.Place;
+import campus.service.PlaceCatalog;
+import campus.service.ScheduleSlot;
 
 final class EventDialog extends JDialog {
     record Result(Event event, boolean deleted) { }

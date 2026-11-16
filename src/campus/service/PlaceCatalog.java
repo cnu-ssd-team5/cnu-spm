@@ -1,31 +1,36 @@
-package campus;
+package campus.service;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import campus.map.MapData;
+import campus.map.RouteService;
+import campus.model.PlannerModel;
 
 /** Combines read-only campus geometry with personal names and pins. */
-final class PlaceCatalog {
+public final class PlaceCatalog {
     private final MapData data;
+    private final RouteService routes;
     private final PlannerModel model;
 
-    PlaceCatalog(MapData data, PlannerModel model) {
-        this.data = data;
+    public PlaceCatalog(RouteService routes, PlannerModel model) {
+        this.data = routes.data();
+        this.routes = routes;
         this.model = model;
     }
 
-    List<Place> all() {
+    public List<Place> all() {
         List<Place> result = new ArrayList<>();
         for (MapData.Building building : data.buildings()) result.add(buildingPlace(building));
         for (PlannerModel.Pin pin : model.pins()) result.add(pinPlace(pin));
         return List.copyOf(result);
     }
 
-    List<Place> namedPlaces() {
+    public List<Place> namedPlaces() {
         return all().stream().filter(Place::named).toList();
     }
 
-    Place find(String id) {
+    public Place find(String id) {
         if (id == null) return null;
         MapData.Building building = data.building(id);
         if (building != null) return buildingPlace(building);
@@ -33,19 +38,19 @@ final class PlaceCatalog {
                 .findFirst().map(this::pinPlace).orElse(null);
     }
 
-    MapData.Route route(Place from, Place to) {
+    public RouteService.Route route(Place from, Place to) {
         if (from == null || to == null) {
-            return new MapData.Route(List.of(), Double.NaN, false, "장소를 선택해 주세요");
+            return new RouteService.Route(List.of(), Double.NaN, false, "장소를 선택해 주세요");
         }
         MapData.Building fromBuilding = data.building(from.id());
         MapData.Building toBuilding = data.building(to.id());
-        if (fromBuilding != null && toBuilding != null) return data.route(fromBuilding, toBuilding);
-        if (fromBuilding != null) return data.route(fromBuilding, to.point());
-        if (toBuilding != null) return data.route(from.point(), toBuilding);
-        return data.route(from.point(), to.point());
+        if (fromBuilding != null && toBuilding != null) return routes.route(fromBuilding, toBuilding);
+        if (fromBuilding != null) return routes.route(fromBuilding, to.point());
+        if (toBuilding != null) return routes.route(from.point(), toBuilding);
+        return routes.route(from.point(), to.point());
     }
 
-    void rename(Place place, String name) {
+    public void rename(Place place, String name) {
         if (name == null || name.isBlank()) throw new IllegalArgumentException("이름을 입력해 주세요");
         if (place.pin()) {
             model.putPin(new PlannerModel.Pin(place.id(), name.strip(), place.point().lat(), place.point().lon()));
@@ -54,7 +59,7 @@ final class PlaceCatalog {
         }
     }
 
-    Place addPin(MapData.GeoPoint point, String name) {
+    public Place addPin(MapData.GeoPoint point, String name) {
         PlannerModel.Pin pin = new PlannerModel.Pin("pin:" + UUID.randomUUID(), name, point.lat(), point.lon());
         model.putPin(pin);
         return pinPlace(pin);

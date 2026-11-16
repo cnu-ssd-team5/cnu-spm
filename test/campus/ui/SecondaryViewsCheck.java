@@ -1,4 +1,4 @@
-package campus;
+package campus.ui;
 
 import java.awt.*;
 import java.awt.event.MouseEvent;
@@ -11,8 +11,12 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.swing.*;
-import campus.PlannerModel.Deadline;
-import campus.PlannerModel.Event;
+import campus.map.MapData;
+import campus.map.RouteService;
+import campus.model.PlannerModel.Deadline;
+import campus.model.PlannerModel.Event;
+import campus.model.PlannerModel;
+import campus.service.PlaceCatalog;
 
 public final class SecondaryViewsCheck {
     private static int checks;
@@ -37,7 +41,8 @@ public final class SecondaryViewsCheck {
         check(!Character.isHighSurrogate(emojiName.charAt(emojiName.lastIndexOf('-') - 1)), "Unicode truncation preserves complete character");
 
         Path project = Path.of(args.length == 0 ? "." : args[0]);
-        MapData data = MapData.load(project.resolve("data/chonnam-campus.osm"));
+        MapData data = MapData.load(project.resolve("resources/map/chonnam-campus.osm"));
+        RouteService routes = new RouteService(data);
         PlannerModel model = new PlannerModel();
         LocalDate date = LocalDate.of(2026, 11, 16);
         String building = data.buildings().get(0).id();
@@ -47,7 +52,7 @@ public final class SecondaryViewsCheck {
         model.putEvent(event("d", "수업 D", building, date, 14, 15));
         Deadline pending = new Deadline("task", "보고서 제출", date, "메모", false, null);
         model.putDeadline(pending);
-        PlaceCatalog places = new PlaceCatalog(data, model);
+        PlaceCatalog places = new PlaceCatalog(routes, model);
         AtomicReference<Throwable> failure = new AtomicReference<>();
         SwingUtilities.invokeAndWait(() -> {
             try {

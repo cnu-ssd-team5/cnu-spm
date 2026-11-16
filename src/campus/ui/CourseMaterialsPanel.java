@@ -1,4 +1,4 @@
-package campus;
+package campus.ui;
 
 import java.awt.*;
 import java.io.IOException;
@@ -12,7 +12,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.function.Consumer;
 import javax.swing.*;
-import campus.PlannerModel.Event;
+import campus.model.PlannerModel.Event;
+import campus.model.PlannerModel;
 
 final class CourseMaterialsPanel extends JPanel {
     private final PlannerModel model;
