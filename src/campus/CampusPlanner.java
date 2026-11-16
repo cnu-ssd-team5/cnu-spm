@@ -41,7 +41,7 @@ public final class CampusPlanner {
             MapData map=MapData.load(osm);
             PlannerModel model=PlannerStore.load(state);
             Path statePath=state;
-            SwingUtilities.invokeLater(() -> new PlannerFrame(map,model,statePath).setVisible(true));
+            SwingUtilities.invokeLater(() -> new PlannerFrame(map,model,statePath,root).setVisible(true));
         } catch(Exception ex) {
             Path statePath=state;
             System.err.println("Campus planner startup failed: "+ex.getMessage());

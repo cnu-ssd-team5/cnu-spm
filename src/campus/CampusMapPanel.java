@@ -24,15 +24,18 @@ final class CampusMapPanel extends JPanel {
 
     private final MapData data;
     private final PlannerModel model;
-    private final Consumer<Building> selection;
+    private final PlaceCatalog places;
+    private final Consumer<Place> selection;
+    private final Consumer<Place> activation;
+    private final Consumer<GeoPoint> pinRequest;
     private final double longitudeScale;
     private final double centerLat;
     private final double centerLon;
     private final Map<String, Route> routeCache = new HashMap<>();
     private List<Occurrence> active = List.of();
     private List<Leg> legs = List.of();
-    private Building searchFrom;
-    private Building searchTo;
+    private Place searchFrom;
+    private Place searchTo;
     private Route searchRoute;
     private String selectedId;
     private double zoom = 1;
@@ -41,10 +44,14 @@ final class CampusMapPanel extends JPanel {
     private Point dragOrigin;
     private boolean dragging;
 
-    CampusMapPanel(MapData data, PlannerModel model, Consumer<Building> selection) {
+    CampusMapPanel(MapData data, PlannerModel model, PlaceCatalog places,
+                   Consumer<Place> selection, Consumer<Place> activation, Consumer<GeoPoint> pinRequest) {
         this.data = data;
         this.model = model;
+        this.places = places;
         this.selection = selection;
+        this.activation = activation;
+        this.pinRequest = pinRequest;
         centerLat = (data.minLat() + data.maxLat()) / 2;
         centerLon = (data.minLon() + data.maxLon()) / 2;
         longitudeScale = Math.cos(Math.toRadians(centerLat));
@@ -53,7 +60,7 @@ final class CampusMapPanel extends JPanel {
         ToolTipManager.sharedInstance().registerComponent(this);
         MouseAdapter mouse = new MouseAdapter() {
             @Override public void mousePressed(MouseEvent e) {
-                dragOrigin = e.getPoint();
+                dragOrigin = SwingUtilities.isLeftMouseButton(e) ? e.getPoint() : null;
                 dragging = false;
             }
             @Override public void mouseDragged(MouseEvent e) {
@@ -67,9 +74,18 @@ final class CampusMapPanel extends JPanel {
                 repaint();
             }
             @Override public void mouseReleased(MouseEvent e) {
+                if (SwingUtilities.isRightMouseButton(e)) {
+                    pinRequest.accept(geoPoint(e.getPoint()));
+                    dragOrigin = null;
+                    return;
+                }
+                if (!SwingUtilities.isLeftMouseButton(e)) return;
                 if (!dragging) {
-                    Building hit = hit(e.getPoint());
-                    if (hit != null) selection.accept(hit);
+                    Place hit = hit(e.getPoint());
+                    if (hit != null) {
+                        if (e.getClickCount() == 2) activation.accept(hit);
+                        else selection.accept(hit);
+                    }
                 }
                 dragOrigin = null;
             }
@@ -87,13 +103,13 @@ final class CampusMapPanel extends JPanel {
         List<Leg> updated = new ArrayList<>();
         for (int i = 1; i < active.size(); i++) {
             Occurrence before = active.get(i - 1), after = active.get(i);
-            Building from = data.building(before.event().buildingId());
-            Building to = data.building(after.event().buildingId());
+            Place from = places.find(before.event().buildingId());
+            Place to = places.find(after.event().buildingId());
             if (from == null || to == null) {
                 updated.add(new Leg(before, after, new Route(List.of(), 0, false, "OSM에서 장소를 찾을 수 없습니다")));
             } else {
-                String key = from.id() + ">" + to.id();
-                Route route = routeCache.computeIfAbsent(key, ignored -> data.route(from, to));
+                String key = from.id() + from.point() + ">" + to.id() + to.point();
+                Route route = routeCache.computeIfAbsent(key, ignored -> places.route(from, to));
                 updated.add(new Leg(before, after, route));
             }
         }
@@ -103,7 +119,7 @@ final class CampusMapPanel extends JPanel {
 
     List<Leg> legs() { return legs; }
 
-    void setSearchRoute(Building from, Building to, Route route) {
+    void setSearchRoute(Place from, Place to, Route route) {
         searchFrom = Objects.requireNonNull(from);
         searchTo = Objects.requireNonNull(to);
         searchRoute = Objects.requireNonNull(route);
@@ -157,6 +173,12 @@ final class CampusMapPanel extends JPanel {
                 getHeight()/2.0 + panY - (point.lat() - centerLat) * scale);
     }
 
+    private GeoPoint geoPoint(Point point) {
+        double scale = scale();
+        return new GeoPoint(centerLat-(point.y-getHeight()/2.0-panY)/scale,
+                centerLon+(point.x-getWidth()/2.0-panX)/(longitudeScale*scale));
+    }
+
     private Path2D path(List<GeoPoint> points, boolean close) {
         Path2D path = new Path2D.Double();
         boolean first = true;
@@ -170,14 +192,17 @@ final class CampusMapPanel extends JPanel {
         return path;
     }
 
-    private Building hit(Point location) {
-        Building near = null;
+    private Place hit(Point location) {
+        for (Place place : places.all()) {
+            if (place.pin() && point(place.point()).distance(location) < 13) return place;
+        }
+        Place near = null;
         double distance = 15;
         for (Building building : data.buildings()) {
-            if (path(building.outline(), true).contains(location)) return building;
+            if (path(building.outline(), true).contains(location)) return places.find(building.id());
             double candidate = point(building.center()).distance(location);
             if (candidate < distance) {
-                near = building;
+                near = places.find(building.id());
                 distance = candidate;
             }
         }
@@ -185,8 +210,9 @@ final class CampusMapPanel extends JPanel {
     }
 
     @Override public String getToolTipText(MouseEvent event) {
-        Building building = hit(event.getPoint());
-        return building == null ? null : building.name() + (model.isFavorite(building.id()) ? " · 즐겨찾기" : " · 클릭하여 선택");
+        Place place = hit(event.getPoint());
+        if (place == null) return null;
+        return place.named() ? place.name() + " · 더블클릭하여 일정 추가" : "더블클릭하여 건물 이름 지정";
     }
 
     @Override protected void paintComponent(Graphics graphics) {
@@ -241,13 +267,18 @@ final class CampusMapPanel extends JPanel {
         } else {
             for (Leg leg : legs) drawRoute(g, leg.route());
         }
+        for (Place place : places.all()) {
+            if (place.pin()) drawPin(g,place);
+        }
         List<Rectangle2D> occupied = new ArrayList<>();
         g.setFont(Theme.font(11, Font.PLAIN));
-        for (Building building : data.buildings()) {
-            boolean important = onRoute.contains(building.id()) || building.id().equals(selectedId) || model.isFavorite(building.id());
-            if (!important && (zoom < 1.8 || building.name().startsWith("이름 없는"))) continue;
-            Point2D xy = point(building.center());
-            String text = building.name();
+        for (Place place : places.all()) {
+            if (!place.named()) continue;
+            boolean important = onRoute.contains(place.id()) || place.id().equals(selectedId)
+                    || model.isFavorite(place.id()) || place.pin() || !model.customName(place.id()).isBlank();
+            if (!important && zoom < 1.5) continue;
+            Point2D xy = point(place.point());
+            String text = place.name();
             FontMetrics fm = g.getFontMetrics();
             Rectangle2D box = new Rectangle2D.Double(xy.getX() - fm.stringWidth(text)/2.0 - 4, xy.getY() + 14, fm.stringWidth(text)+8, 19);
             if (important) {
@@ -261,7 +292,7 @@ final class CampusMapPanel extends JPanel {
             g.fillRoundRect((int)box.getX(), (int)box.getY(), (int)box.getWidth(), (int)box.getHeight(), 6, 6);
             g.setColor(important ? Theme.BLUE : Theme.INK);
             g.drawString(text, (float)box.getX()+4, (float)box.getY()+14);
-            if (model.isFavorite(building.id()) && !onRoute.contains(building.id())) {
+            if (model.isFavorite(place.id()) && !onRoute.contains(place.id())) {
                 g.setColor(new Color(211, 148, 31));
                 g.fill(new Ellipse2D.Double(xy.getX()-4, xy.getY()-4, 8, 8));
             }
@@ -280,9 +311,9 @@ final class CampusMapPanel extends JPanel {
         }
         g.setFont(Theme.font(12, Font.BOLD));
         for (Map.Entry<String,StringBuilder> entry : numbers.entrySet()) {
-            Building building = data.building(entry.getKey());
-            if (building == null) continue;
-            Point2D xy = point(building.center());
+            Place place = places.find(entry.getKey());
+            if (place == null) continue;
+            Point2D xy = point(place.point());
             String text = entry.getValue().toString();
             int width = Math.max(26, g.getFontMetrics().stringWidth(text) + 14);
             g.setColor(Color.WHITE);
@@ -310,6 +341,26 @@ final class CampusMapPanel extends JPanel {
         g.setColor(Theme.BLUE);
         g.setStroke(new BasicStroke(3.6f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
         g.draw(geometry);
+    }
+
+    private void drawPin(Graphics2D g, Place place) {
+        Point2D point = point(place.point());
+        double x = point.getX(), y = point.getY();
+        g.setColor(place.id().equals(selectedId) ? Theme.BLUE : new Color(209,76,70));
+        g.setStroke(new BasicStroke(2.5f,BasicStroke.CAP_ROUND,BasicStroke.JOIN_ROUND));
+        g.draw(new Line2D.Double(x,y-9,x,y));
+        Path2D head = new Path2D.Double();
+        head.moveTo(x-7,y-11);
+        head.lineTo(x-4,y-14);
+        head.lineTo(x-4,y-22);
+        head.lineTo(x+4,y-22);
+        head.lineTo(x+4,y-14);
+        head.lineTo(x+7,y-11);
+        head.closePath();
+        g.fill(head);
+        g.setColor(Color.WHITE);
+        g.setStroke(new BasicStroke(1));
+        g.draw(head);
     }
 
     private void drawScale(Graphics2D g) {

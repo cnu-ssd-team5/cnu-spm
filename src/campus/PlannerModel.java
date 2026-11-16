@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.UUID;
 
 /** Personal schedules and date-specific exceptions, independent of the map UI. */
 public final class PlannerModel {
@@ -68,6 +69,35 @@ public final class PlannerModel {
         }
     }
 
+    public record Pin(String id, String name, double lat, double lon) {
+        public Pin {
+            id = requiredText(id, "핀 ID");
+            name = requiredText(name, "핀 이름");
+            if (!id.startsWith("pin:")) {
+                throw new IllegalArgumentException("핀 ID는 pin:으로 시작해야 합니다.");
+            }
+            if (!Double.isFinite(lat) || !Double.isFinite(lon)
+                    || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+                throw new IllegalArgumentException("핀의 위경도 좌표가 올바르지 않습니다.");
+            }
+        }
+    }
+
+    public record Deadline(String id, String title, LocalDate date, String note,
+                           boolean completed, LocalDate completedOn) {
+        public Deadline {
+            id = requiredText(id, "마감 일정 ID");
+            title = requiredText(title, "마감 일정 이름");
+            Objects.requireNonNull(date, "마감 날짜");
+            note = Objects.requireNonNullElse(note, "");
+            if (!completed) completedOn = null;
+        }
+
+        public Deadline(String id, String title, LocalDate date, String note, boolean completed) {
+            this(id, title, date, note, completed, completed ? LocalDate.now() : null);
+        }
+    }
+
     record Cancellation(String eventId, LocalDate date) { }
 
     private static final Comparator<Event> EVENT_ORDER = Comparator.comparing(Event::start)
@@ -77,6 +107,9 @@ public final class PlannerModel {
     private final Set<String> favorites = new LinkedHashSet<>();
     private final Set<Cancellation> cancellations = new LinkedHashSet<>();
     private final Map<LocalDate, String> dayNotes = new LinkedHashMap<>();
+    private final Map<String, String> buildingNames = new LinkedHashMap<>();
+    private final Map<String, Pin> pins = new LinkedHashMap<>();
+    private final Map<String, Deadline> deadlines = new LinkedHashMap<>();
 
     public PlannerModel() { }
 
@@ -150,6 +183,134 @@ public final class PlannerModel {
         } else {
             dayNotes.put(date, text);
         }
+    }
+
+    public synchronized String customName(String buildingId) {
+        return buildingNames.getOrDefault(buildingId, "");
+    }
+
+    public synchronized void renameBuilding(String buildingId, String name) {
+        buildingNames.put(requiredText(buildingId, "건물 ID"), requiredText(name, "건물 이름"));
+    }
+
+    public synchronized Map<String, String> buildingNames() {
+        return Map.copyOf(buildingNames);
+    }
+
+    public synchronized List<Pin> pins() {
+        return List.copyOf(pins.values());
+    }
+
+    public synchronized void putPin(Pin pin) {
+        Objects.requireNonNull(pin, "핀");
+        pins.put(pin.id(), pin);
+    }
+
+    public synchronized List<Deadline> deadlines() {
+        return deadlines.values().stream().sorted(Comparator.comparing(Deadline::date)
+                .thenComparing(Deadline::completed).thenComparing(Deadline::title)
+                .thenComparing(Deadline::id)).toList();
+    }
+
+    public synchronized List<Deadline> deadlines(LocalDate date) {
+        Objects.requireNonNull(date, "마감 날짜");
+        return deadlines().stream().filter(deadline -> deadline.date().equals(date)).toList();
+    }
+
+    public synchronized void putDeadline(Deadline deadline) {
+        Objects.requireNonNull(deadline, "마감 일정");
+        deadlines.put(deadline.id(), deadline);
+    }
+
+    public synchronized void removeDeadline(String id) {
+        deadlines.remove(requiredText(id, "마감 일정 ID"));
+    }
+
+    public synchronized void toggleDeadline(String id) {
+        Deadline deadline = deadlines.get(requiredText(id, "마감 일정 ID"));
+        if (deadline == null) throw new IllegalArgumentException("마감 일정을 찾을 수 없습니다.");
+        boolean completed = !deadline.completed();
+        deadlines.put(deadline.id(), new Deadline(deadline.id(), deadline.title(), deadline.date(),
+                deadline.note(), completed, completed ? LocalDate.now() : null));
+    }
+
+    /** Merge a shared planner without replacing existing personal records. */
+    public void mergeFrom(PlannerModel incoming) {
+        Objects.requireNonNull(incoming, "가져올 일정");
+        if (incoming == this) return;
+        List<Event> sharedEvents;
+        List<Pin> sharedPins;
+        List<Deadline> sharedDeadlines;
+        Map<String, String> sharedNames;
+        Set<String> sharedFavorites;
+        Set<Cancellation> sharedCancellations;
+        Map<LocalDate, String> sharedNotes;
+        // Copy before locking this model so two simultaneous reciprocal imports cannot deadlock.
+        synchronized (incoming) {
+            sharedEvents = incoming.events();
+            sharedPins = incoming.pins();
+            sharedDeadlines = incoming.deadlines();
+            sharedNames = incoming.buildingNames();
+            sharedFavorites = incoming.favorites();
+            sharedCancellations = incoming.cancellations();
+            sharedNotes = incoming.dayNotes();
+        }
+        synchronized (this) {
+            Map<String, String> placeIds = new LinkedHashMap<>();
+            for (Pin pin : sharedPins) {
+                Pin matching = pins.values().stream().filter(existing -> existing.name().equals(pin.name())
+                        && Double.compare(existing.lat(), pin.lat()) == 0
+                        && Double.compare(existing.lon(), pin.lon()) == 0).findFirst().orElse(null);
+                String id = matching != null ? matching.id()
+                        : pins.containsKey(pin.id()) ? "pin:" + UUID.randomUUID() : pin.id();
+                placeIds.put(pin.id(), id);
+                if (matching == null) pins.put(id, new Pin(id, pin.name(), pin.lat(), pin.lon()));
+            }
+            Map<String, String> eventIds = new LinkedHashMap<>();
+            for (Event event : sharedEvents) {
+                String placeId = placeIds.getOrDefault(event.buildingId(), event.buildingId());
+                Event candidate = copyEvent(event, event.id(), placeId);
+                Event matching = events.values().stream()
+                        .filter(existing -> copyEvent(candidate, existing.id(), placeId).equals(existing))
+                        .findFirst().orElse(null);
+                String id = matching != null ? matching.id()
+                        : events.containsKey(event.id()) ? UUID.randomUUID().toString() : event.id();
+                eventIds.put(event.id(), id);
+                if (matching == null) events.put(id, copyEvent(event, id, placeId));
+            }
+            for (Deadline deadline : sharedDeadlines) {
+                Deadline matching = deadlines.values().stream()
+                        .filter(existing -> copyDeadline(deadline, existing.id()).equals(existing))
+                        .findFirst().orElse(null);
+                if (matching != null) continue;
+                String id = deadlines.containsKey(deadline.id()) ? UUID.randomUUID().toString() : deadline.id();
+                deadlines.put(id, copyDeadline(deadline, id));
+            }
+            sharedNames.forEach(buildingNames::putIfAbsent);
+            sharedFavorites.forEach(id -> favorites.add(placeIds.getOrDefault(id, id)));
+            for (Cancellation cancellation : sharedCancellations) {
+                String id = eventIds.get(cancellation.eventId());
+                Event event = events.get(id);
+                if (event != null && event.occursOn(cancellation.date())) {
+                    cancellations.add(new Cancellation(id, cancellation.date()));
+                }
+            }
+            sharedNotes.forEach((date, text) -> dayNotes.merge(date, text, (existing, added) -> {
+                if (existing.contains(added)) return existing;
+                if (added.contains(existing)) return added;
+                return existing + "\n\n---\n\n" + added;
+            }));
+        }
+    }
+
+    private static Event copyEvent(Event event, String id, String placeId) {
+        return new Event(id, event.title(), placeId, event.start(), event.end(), event.category(),
+                event.weekday(), event.date(), event.note());
+    }
+
+    private static Deadline copyDeadline(Deadline deadline, String id) {
+        return new Deadline(id, deadline.title(), deadline.date(), deadline.note(),
+                deadline.completed(), deadline.completedOn());
     }
 
     synchronized Set<Cancellation> cancellations() {
