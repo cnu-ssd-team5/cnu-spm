@@ -1,0 +1,5 @@
+/build/
+/data/planner-state.xml
+/data/*.lock
+/data/.campus-planner-*.tmp
+*.class
