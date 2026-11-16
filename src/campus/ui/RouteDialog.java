@@ -1,4 +1,4 @@
-package campus;
+package campus.ui;
 
 import java.awt.*;
 import java.util.Comparator;
@@ -9,27 +9,30 @@ import java.util.Set;
 import javax.swing.*;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
-import campus.MapData.Building;
-import campus.MapData.Route;
+import campus.map.CampusMap;
+import campus.map.CampusMap.Building;
+import campus.map.RouteService;
+import campus.map.RouteService.Route;
+import campus.model.PlannerModel;
 
 final class RouteDialog extends JDialog {
     record Result(Building from, Building to, Route route) { }
 
-    private final MapData data;
+    private final RouteService routes;
     private final PlacePicker from;
     private final PlacePicker to;
     private final JLabel error = Theme.label(" ", 12, Theme.WARNING);
     private Result result;
 
-    static Result open(JFrame owner, MapData data, PlannerModel model, Building initial) {
-        RouteDialog dialog = new RouteDialog(owner, data, model, initial);
+    static Result open(JFrame owner, CampusMap data, RouteService routes, PlannerModel model, Building initial) {
+        RouteDialog dialog = new RouteDialog(owner, data, routes, model, initial);
         dialog.setVisible(true);
         return dialog.result;
     }
 
-    private RouteDialog(JFrame owner, MapData data, PlannerModel model, Building initial) {
+    private RouteDialog(JFrame owner, CampusMap data, RouteService routes, PlannerModel model, Building initial) {
         super(owner, "건물 간 최단거리 찾기", true);
-        this.data = data;
+        this.routes = routes;
         from = new PlacePicker(data, model);
         to = new PlacePicker(data, model);
         from.select(initial);
@@ -94,7 +97,7 @@ final class RouteDialog extends JDialog {
             error.setText("출발 건물과 도착 건물을 모두 선택해 주세요.");
             return;
         }
-        result = new Result(source, destination, data.route(source, destination));
+        result = new Result(source, destination, routes.route(source, destination));
         dispose();
     }
 
@@ -103,7 +106,7 @@ final class RouteDialog extends JDialog {
         private final JComboBox<Building> choices = new JComboBox<>();
         private final List<Building> buildings;
 
-        PlacePicker(MapData data, PlannerModel model) {
+        PlacePicker(CampusMap data, PlannerModel model) {
             super(new BorderLayout(0, 6));
             setOpaque(false);
             Theme.field(query);

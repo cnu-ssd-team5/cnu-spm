@@ -1,34 +1,26 @@
-package campus;
+package campus.ui;
 
 import java.awt.*;
 import java.awt.event.*;
 import java.awt.geom.*;
-import java.time.Duration;
 import java.util.List;
 import java.util.*;
 import java.util.function.Consumer;
 import javax.swing.*;
-import campus.MapData.*;
-import campus.PlannerModel.Occurrence;
+import campus.map.CampusMap;
+import campus.map.CampusMap.*;
+import campus.map.RouteService.Route;
+import campus.model.PlannerModel;
+import campus.model.PlannerModel.Occurrence;
+import campus.service.DayPlanService.Leg;
 
-final class CampusMapPanel extends JPanel {
-    static final double WALKING_METERS_PER_SECOND = 1.3;
-    record Leg(Occurrence from, Occurrence to, Route route) {
-        int minutes() {
-            return (int) Math.ceil(route.meters() / (WALKING_METERS_PER_SECOND * 60));
-        }
-        long gapMinutes() {
-            return Duration.between(from.event().end(), to.event().start()).toMinutes();
-        }
-    }
-
-    private final MapData data;
+final class MapPanel extends JPanel {
+    private final CampusMap data;
     private final PlannerModel model;
     private final Consumer<Building> selection;
     private final double longitudeScale;
     private final double centerLat;
     private final double centerLon;
-    private final Map<String, Route> routeCache = new HashMap<>();
     private List<Occurrence> active = List.of();
     private List<Leg> legs = List.of();
     private Building searchFrom;
@@ -41,7 +33,7 @@ final class CampusMapPanel extends JPanel {
     private Point dragOrigin;
     private boolean dragging;
 
-    CampusMapPanel(MapData data, PlannerModel model, Consumer<Building> selection) {
+    MapPanel(CampusMap data, PlannerModel model, Consumer<Building> selection) {
         this.data = data;
         this.model = model;
         this.selection = selection;
@@ -82,22 +74,9 @@ final class CampusMapPanel extends JPanel {
         addMouseWheelListener(mouse);
     }
 
-    void setOccurrences(List<Occurrence> occurrences) {
+    void setOccurrences(List<Occurrence> occurrences, List<Leg> legs) {
         active = occurrences.stream().filter(o -> !o.canceled()).toList();
-        List<Leg> updated = new ArrayList<>();
-        for (int i = 1; i < active.size(); i++) {
-            Occurrence before = active.get(i - 1), after = active.get(i);
-            Building from = data.building(before.event().buildingId());
-            Building to = data.building(after.event().buildingId());
-            if (from == null || to == null) {
-                updated.add(new Leg(before, after, new Route(List.of(), 0, false, "OSM에서 장소를 찾을 수 없습니다")));
-            } else {
-                String key = from.id() + ">" + to.id();
-                Route route = routeCache.computeIfAbsent(key, ignored -> data.route(from, to));
-                updated.add(new Leg(before, after, route));
-            }
-        }
-        legs = List.copyOf(updated);
+        this.legs = legs;
         repaint();
     }
 

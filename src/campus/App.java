@@ -1,32 +1,40 @@
 package campus;
 
-import java.awt.Font;
 import java.io.IOException;
 import java.nio.channels.FileChannel;
 import java.nio.channels.FileLock;
 import java.nio.file.*;
-import java.util.Enumeration;
 import javax.swing.*;
-import javax.swing.plaf.FontUIResource;
+import campus.map.CampusMap;
+import campus.map.RouteService;
+import campus.model.PlannerModel;
+import campus.model.PlannerStore;
+import campus.ui.MainFrame;
+import campus.ui.Theme;
 
-public final class CampusPlanner {
-    private CampusPlanner() { }
+public final class App {
+    private App() { }
 
     public static void main(String[] args) {
         Path root=Path.of(System.getProperty("campus.home",".")).toAbsolutePath().normalize();
-        Path osm=root.resolve("data/chonnam-campus.osm");
-        Path state=root.resolve("data/planner-state.xml");
+        Path osm=null;
+        // 일정은 사용자 홈 폴더에 저장합니다. 프로그램 폴더에 쓰기 권한이 없어도 동작합니다.
+        Path state=Path.of(System.getProperty("user.home"),".cnu-planner","planner-state.xml");
+        boolean defaultState=true;
         for(int i=0;i<args.length;i++) {
             if(i+1<args.length && args[i].equals("--osm"))osm=root.resolve(args[++i]).normalize();
-            else if(i+1<args.length && args[i].equals("--state"))state=root.resolve(args[++i]).normalize();
-            else {
-                System.err.println("Usage: campus.CampusPlanner [--osm file.osm] [--state planner-state.xml]");
+            else if(i+1<args.length && args[i].equals("--state")) {
+                state=root.resolve(args[++i]).normalize();
+                defaultState=false;
+            } else {
+                System.err.println("Usage: campus.App [--osm file.osm] [--state planner-state.xml]");
                 return;
             }
         }
-        configureLookAndFeel();
+        Theme.configureLookAndFeel();
         try {
             Files.createDirectories(state.getParent());
+            if(defaultState)copyOldState(root.resolve("data/planner-state.xml"),state);
             FileChannel channel = FileChannel.open(state.resolveSibling(state.getFileName()+".lock"),
                     StandardOpenOption.CREATE, StandardOpenOption.WRITE);
             FileLock lock = channel.tryLock();
@@ -38,10 +46,11 @@ public final class CampusPlanner {
                 try { lock.release(); channel.close(); }
                 catch(IOException ignored) { }
             },"planner-state-lock"));
-            MapData map=MapData.load(osm);
+            CampusMap map=osm==null ? CampusMap.loadBundled() : CampusMap.load(osm);
+            RouteService routes=new RouteService(map);
             PlannerModel model=PlannerStore.load(state);
             Path statePath=state;
-            SwingUtilities.invokeLater(() -> new PlannerFrame(map,model,statePath).setVisible(true));
+            SwingUtilities.invokeLater(() -> new MainFrame(map,routes,model,statePath).setVisible(true));
         } catch(Exception ex) {
             Path statePath=state;
             System.err.println("Campus planner startup failed: "+ex.getMessage());
@@ -51,17 +60,8 @@ public final class CampusPlanner {
         }
     }
 
-    static void configureLookAndFeel() {
-        try { UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName()); }
-        catch(Exception ignored) { /* Swing 기본 LookAndFeel로 실행합니다. */ }
-        FontUIResource font=new FontUIResource(Theme.font(13,Font.PLAIN));
-        Enumeration<Object> keys=UIManager.getDefaults().keys();
-        while(keys.hasMoreElements()) {
-            Object key=keys.nextElement();
-            if(UIManager.get(key) instanceof FontUIResource)UIManager.put(key,font);
-        }
-        UIManager.put("ToolTip.font",Theme.font(12,Font.PLAIN));
-        UIManager.put("OptionPane.messageFont",Theme.font(13,Font.PLAIN));
-        UIManager.put("Button.font",Theme.font(12,Font.PLAIN));
+    // 예전 버전은 프로젝트의 data 폴더에 저장했습니다. 처음 한 번만 새 위치로 복사합니다.
+    private static void copyOldState(Path old, Path state) throws IOException {
+        if(Files.isRegularFile(old) && !Files.exists(state))Files.copy(old,state);
     }
 }

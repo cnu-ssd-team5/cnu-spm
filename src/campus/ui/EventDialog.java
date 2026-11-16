@@ -1,4 +1,4 @@
-package campus;
+package campus.ui;
 
 import java.awt.*;
 import java.time.*;
@@ -9,9 +9,12 @@ import java.util.List;
 import javax.swing.*;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
-import campus.MapData.Building;
-import campus.PlannerModel.Category;
-import campus.PlannerModel.Event;
+import campus.map.CampusMap;
+import campus.map.CampusMap.Building;
+import campus.model.PlannerModel;
+import campus.model.PlannerModel.Category;
+import campus.model.PlannerModel.Event;
+import campus.service.ScheduleSlot;
 
 final class EventDialog extends JDialog {
     record Result(Event event, boolean deleted) { }
@@ -29,19 +32,19 @@ final class EventDialog extends JDialog {
     private final Event original;
     private Result result;
 
-    static Result open(JFrame owner, MapData map, PlannerModel model, LocalDate selectedDate,
+    static Result open(JFrame owner, CampusMap map, PlannerModel model, LocalDate selectedDate,
                        Building selectedBuilding, Event original, boolean repeat) {
         return open(owner, map, model, selectedDate, selectedBuilding, original, repeat, null);
     }
 
-    static Result open(JFrame owner, MapData map, PlannerModel model, LocalDate selectedDate,
+    static Result open(JFrame owner, CampusMap map, PlannerModel model, LocalDate selectedDate,
                        Building selectedBuilding, Event original, boolean repeat, ScheduleSlot slot) {
         EventDialog dialog = new EventDialog(owner, map, model, selectedDate, selectedBuilding, original, repeat, slot);
         dialog.setVisible(true);
         return dialog.result;
     }
 
-    private EventDialog(JFrame owner, MapData map, PlannerModel model, LocalDate selectedDate,
+    private EventDialog(JFrame owner, CampusMap map, PlannerModel model, LocalDate selectedDate,
                         Building selectedBuilding, Event original, boolean repeat, ScheduleSlot slot) {
         super(owner, original == null ? "캠퍼스 일정 추가" : "캠퍼스 일정 편집", true);
         this.original = original;
