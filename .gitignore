@@ -1,5 +1,19 @@
+# Generated builds, QA output and packaged applications
 /build/
-/data/planner-state.xml
-/data/*.lock
-/data/.campus-planner-*.tmp
+/dist/
 *.class
+
+# Personal schedule state and its temporary files
+/data/planner-state.xml
+/data/planner-state.xml.lock
+/data/.campus-planner-*.tmp
+
+# Course materials and local folder-service state
+/data/buildings/
+/data/.folder.lock
+/data/.folder-course-links.properties
+/data/.folder-course-backups/
+/data/.folder-recent/
+/data/.folder-trash/
+/data/folder-cleanup.log
+/data/course-links-*.tmp
