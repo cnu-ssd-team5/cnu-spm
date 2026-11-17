@@ -124,7 +124,6 @@ public final class MainFrame extends JFrame {
         body.add(center, BorderLayout.CENTER);
         page.add(body, BorderLayout.CENTER);
         JPanel footer = Theme.transparent(new BorderLayout());
-        footer.add(Theme.label("전남대학교 광주캠퍼스  ·  OSM 지도  ·  보행 속도 1.3 m/s 기준", 11, Theme.MUTED), BorderLayout.WEST);
         JPanel storage=Theme.transparent(new FlowLayout(FlowLayout.RIGHT,6,0));
         storage.add(Theme.button("일정 공유",false,()->share(false)));
         storage.add(Theme.button("일정 가져오기",false,()->share(true)));
@@ -145,16 +144,6 @@ public final class MainFrame extends JFrame {
 
     private JPanel header() {
         JPanel header = Theme.transparent(new BorderLayout(20, 0));
-        JPanel brand = Theme.transparent(new FlowLayout(FlowLayout.LEFT, 0, 0));
-        JLabel logo = Theme.heading("CNU", 25);
-        logo.setForeground(Theme.BLUE);
-        brand.add(logo);
-        brand.add(Box.createHorizontalStrut(15));
-        JPanel text = Theme.transparent(new GridLayout(2,1,0,4));
-        text.add(Theme.heading("나의 캠퍼스, 나의 한 주", 21));
-        text.add(Theme.label("수업부터 약속까지 · 하루의 일정을 지도에서 이어보세요", 12, Theme.MUTED));
-        brand.add(text);
-        header.add(brand, BorderLayout.WEST);
         JPanel actions = Theme.transparent(new FlowLayout(FlowLayout.RIGHT, 9, 6));
         for(String view:List.of("지도","주간시간표","달력","과목자료")) {
             JButton button=Theme.button(view,false,()->showView(view));viewButtons.put(view,button);actions.add(button);

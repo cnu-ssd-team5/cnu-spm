@@ -3,6 +3,7 @@ package campus.ui;
 import java.awt.*;
 import java.time.*;
 import java.time.format.TextStyle;
+import java.time.temporal.TemporalAdjusters;
 import java.util.List;
 import java.util.Locale;
 import javax.swing.*;
@@ -33,23 +34,26 @@ final class WeekBar {
     }
 
     void refresh(LocalDate selectedDate) {
-        LocalDate monday = selectedDate.with(DayOfWeek.MONDAY);
-        weekTitle.setText(monday.getYear()+"년 "+monday.getMonthValue()+"월 "+monday.getDayOfMonth()+"일 — "+monday.plusDays(6).getMonthValue()+"월 "+monday.plusDays(6).getDayOfMonth()+"일");
+        LocalDate sunday = selectedDate.with(TemporalAdjusters.previousOrSame(DayOfWeek.SUNDAY));
+        weekTitle.setText(sunday.getYear()+"년 "+sunday.getMonthValue()+"월 "+sunday.getDayOfMonth()+"일 — "+sunday.plusDays(6).getMonthValue()+"월 "+sunday.plusDays(6).getDayOfMonth()+"일");
         weekDays.removeAll();
         for (int i = 0; i < 7; i++) {
-            LocalDate date = monday.plusDays(i);
+            LocalDate date = sunday.plusDays(i);
             List<Occurrence> daily = model.occurrences(date);
             long count = daily.stream().filter(o -> !o.canceled()).count()+model.deadlines(date).size();
             String day = date.getDayOfWeek().getDisplayName(TextStyle.SHORT,Locale.KOREAN);
             boolean chosen = date.equals(selectedDate);
-            JButton button = Theme.button("<html><center>"+day+"  "+date.getDayOfMonth()+"<br><font size='2'>"+(count==0 ? "일정 없음" : count+"개 일정")+"</font></center></html>",chosen,() -> frame.changeDate(date));
+            JButton button = Theme.button("<html><center>"+day+"  "+date.getDayOfMonth()+"<br><font size='2'>"+(count==0 ? "일정 없음" : count+"개 일정")+"</font></center></html>",false,() -> frame.changeDate(date));
             if(date.getDayOfWeek()==DayOfWeek.SATURDAY || date.getDayOfWeek()==DayOfWeek.SUNDAY) {
                 button.putClientProperty("calendar.fill",date.getDayOfWeek()==DayOfWeek.SATURDAY?new Color(190,227,250):new Color(250,207,224));
                 button.setForeground(Theme.INK);
-                if(chosen)button.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(Theme.BLUE,2),BorderFactory.createEmptyBorder(7,11,7,11)));
             }
-            button.putClientProperty("calendar.today",date.equals(campus.calendar.PlannerTime.today()));
-            if (date.equals(campus.calendar.PlannerTime.today())) button.setToolTipText("오늘");
+            if (chosen) button.putClientProperty("calendar.fill", Theme.SELECTED_DAY);
+            if (date.equals(campus.calendar.PlannerTime.today())) {
+                button.setForeground(Theme.TODAY_TEXT);
+                button.setToolTipText("오늘");
+            }
+            button.setName(date.toString());
             weekDays.add(button);
         }
     }

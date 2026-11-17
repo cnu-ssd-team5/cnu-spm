@@ -14,6 +14,8 @@ public final class Theme {
     public static final Color BLUE = new Color(40, 100, 230);
     public static final Color PALE_BLUE = new Color(234, 241, 255);
     public static final Color LINE = new Color(225, 231, 240);
+    public static final Color SELECTED_DAY = new Color(255, 235, 130);
+    public static final Color TODAY_TEXT = new Color(196, 54, 54);
     public static final Color WARNING = new Color(172, 80, 33);
 
     // 맑은 고딕이 없는 PC(영문 Windows, Mac, Linux)에서도 한글이 깨지지 않도록 설치된 폰트 중에서 고릅니다.
@@ -73,10 +75,6 @@ public final class Theme {
                 if (!primary) {
                     g.setColor(isFocusOwner() ? BLUE : LINE);
                     g.drawRoundRect(0, 0, getWidth() - 1, getHeight() - 1, 12, 12);
-                }
-                if(Boolean.TRUE.equals(getClientProperty("calendar.today"))) {
-                    g.setColor(new Color(245,190,20));g.setStroke(new BasicStroke(3));
-                    g.drawRoundRect(2,2,getWidth()-5,getHeight()-5,12,12);
                 }
                 g.dispose();
                 super.paintComponent(graphics);
