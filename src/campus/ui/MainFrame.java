@@ -257,7 +257,7 @@ public final class MainFrame extends JFrame {
     private void refresh() {
         week.refresh(selectedDate);
         Semester semester=Semester.forDate(selectedDate);
-        timetable.refresh(semester);calendar.refresh(selectedDate,semester);materials.refresh(semester);
+        timetable.refresh(selectedDate);calendar.refresh(selectedDate,semester);materials.refresh(semester);
         List<Occurrence> occurrences = model.occurrences(selectedDate);
         List<Leg> legs = plans.legs(occurrences);
         map.setOccurrences(occurrences, legs);
@@ -350,8 +350,7 @@ public final class MainFrame extends JFrame {
         if(unsaved && !persist())return;
         if(folders.isBusy())return;
         if(event!=null&&event.recurring()) {
-            Semester term=model.semesterOf(event.id());
-            timetable.refresh(term==null?Semester.forDate(selectedDate):term);
+            timetable.refresh(selectedDate);
             timetable.editEvent(event);return;
         }
         EventDialog.Result result=EventDialog.open(this,data,model,selectedDate,selectedBuilding,event,repeat,slot);
