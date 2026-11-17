@@ -14,7 +14,6 @@ import campus.model.PlannerModel;
 import campus.model.PlannerModel.Event;
 import campus.model.PlannerModel.Occurrence;
 import campus.service.DayPlanService.Leg;
-import campus.service.ScheduleSlot;
 
 /** 오른쪽의 하루 일정 카드, 일정 사이 이동 시간, 오늘의 메모. */
 final class SchedulePanel {
@@ -24,7 +23,7 @@ final class SchedulePanel {
     private final MainFrame frame;
     private final CampusMap data;
     private final PlannerModel model;
-    private final JLabel dayTitle = Theme.heading(" ", 18);
+    private final JLabel dayTitle = Theme.heading(" ", 16);
     private final JLabel daySummary = Theme.label(" ", 12, Theme.MUTED);
     private final JPanel schedule = Theme.transparent(new GridBagLayout());
     private final JTextArea dayNote = new JTextArea(3, 20);
@@ -36,7 +35,13 @@ final class SchedulePanel {
         this.model = model;
         JPanel eventsCard = Theme.card(new BorderLayout(0,12));
         JPanel title = Theme.transparent(new GridLayout(2,1,0,5));
-        title.add(dayTitle);
+        JPanel dateRow = Theme.transparent(new BorderLayout(5,0));
+        dateRow.add(dayTitle,BorderLayout.CENTER);
+        JButton addEvent = Theme.button("일정 추가",false,() -> frame.edit(null,false));
+        addEvent.setFont(Theme.font(11,Font.BOLD));
+        addEvent.setBorder(BorderFactory.createEmptyBorder(8,8,8,8));
+        dateRow.add(addEvent,BorderLayout.EAST);
+        title.add(dateRow);
         title.add(daySummary);
         eventsCard.add(title,BorderLayout.NORTH);
         eventsCard.add(Theme.scroll(schedule),BorderLayout.CENTER);
@@ -71,6 +76,7 @@ final class SchedulePanel {
         try {
             refreshSchedule(occurrences, legs);
             dayTitle.setText(date.format(DAY));
+            dayTitle.setToolTipText(date.format(DAY));
             dayNote.setText(model.dayNote(date));
             dayNote.setCaretPosition(0);
         } finally {
@@ -96,32 +102,19 @@ final class SchedulePanel {
             empty.add(Theme.heading("오늘의 일정을 채워보세요",15));
             empty.add(Theme.label("고정 수업은 매주 자동으로 표시됩니다.",12,Theme.MUTED));
             empty.add(Theme.label("동아리와 약속은 하루 일정으로 추가하세요.",11,Theme.MUTED));
-            empty.add(Theme.button("+ 이 날짜에 일정 추가",true,() -> frame.edit(null,false)));
             schedule.add(empty,c);
             c.gridy++;
         }
         int routeIndex=0;
         int activeIndex=0;
-        List<Occurrence> activeOccurrences = occurrences.stream().filter(o -> !o.canceled()).toList();
-        LocalTime occupiedUntil = null;
-        if (!activeOccurrences.isEmpty()) {
-            addSlotButton(ScheduleSlot.before(activeOccurrences.get(0).event().start()), c);
-        } else if (!occurrences.isEmpty()) {
-            addSlotButton(new ScheduleSlot(LocalTime.of(9, 0), LocalTime.of(10, 0)), c);
-        }
         for (Occurrence occurrence : occurrences) {
             if (!occurrence.canceled() && activeIndex>0) {
-                addSlotButton(ScheduleSlot.between(occupiedUntil, occurrence.event().start()), c);
                 schedule.add(legCard(legs.get(routeIndex++)),c);
                 c.gridy++;
             }
             schedule.add(eventCard(occurrence,occurrence.canceled() ? 0 : ++activeIndex),c);
             c.gridy++;
-            if (!occurrence.canceled() && (occupiedUntil == null || occurrence.event().end().isAfter(occupiedUntil))) {
-                occupiedUntil = occurrence.event().end();
-            }
         }
-        if (occupiedUntil != null) addSlotButton(ScheduleSlot.after(occupiedUntil), c);
         for(var deadline:model.deadlines(frame.selectedDate())) {
             JButton item=Theme.button(deadline.title()+" · "+(deadline.completed()?"완료":"미완료"),false,
                     ()->frame.editDeadline(deadline,deadline.date()));
@@ -131,17 +124,6 @@ final class SchedulePanel {
         c.weighty=1;
         c.fill=GridBagConstraints.BOTH;
         schedule.add(Theme.transparent(new BorderLayout()),c);
-    }
-
-    private void addSlotButton(ScheduleSlot slot, GridBagConstraints constraints) {
-        if (slot == null) return;
-        String text = "+  " + slot.start().format(CLOCK) + " – " + slot.end().format(CLOCK) + " 일정 추가";
-        JButton button = Theme.button(text, false, () -> frame.edit(null, false, slot));
-        button.setForeground(Theme.BLUE);
-        button.setBorder(BorderFactory.createEmptyBorder(7, 8, 7, 8));
-        button.setToolTipText("선택한 날짜의 새 일정에 이 시간대를 미리 채웁니다");
-        schedule.add(button, constraints);
-        constraints.gridy++;
     }
 
     private JPanel eventCard(Occurrence occurrence,int index) {

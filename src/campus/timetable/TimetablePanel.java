@@ -25,7 +25,6 @@ public final class TimetablePanel extends JPanel {
         grid=new WeekGrid(service,map,(WeekGrid.RangeEditor)this::edit);
         JPanel bar=Theme.transparent(new BorderLayout(10,0));
         bar.add(period,BorderLayout.CENTER);
-        bar.add(Theme.button("+ 일정 추가",true,()->edit(null,selectedDate.getDayOfWeek(),LocalTime.of(9,0),LocalTime.of(10,0))),BorderLayout.EAST);
         bar.add(Theme.label("빈 시간대를 드래그하여 일정 추가 · 더블클릭하여 편집",11,Theme.MUTED),BorderLayout.SOUTH);
         add(bar,BorderLayout.NORTH);
         JScrollPane scroll=Theme.scroll(grid);scroll.getVerticalScrollBar().setUnitIncrement(24);add(scroll);
@@ -44,17 +43,25 @@ public final class TimetablePanel extends JPanel {
                 + monday.plusDays(6).getMonthValue() + "/" + monday.plusDays(6).getDayOfMonth());
         grid.refresh();
     }
+    /** 우측 날짜 버튼과 지도에서 사용하는 공통 일정 등록창. */
+    public void addEvent(LocalDate date, CampusMap.Building initialPlace) {
+        refresh(date);
+        edit(null,date.getDayOfWeek(),LocalTime.of(9,0),LocalTime.of(10,0),initialPlace);
+    }
     public void editEvent(Event event) {
         edit(event,event.recurring()?event.weekday():event.date().getDayOfWeek(),event.start(),event.end());
     }
     private void edit(Event original,DayOfWeek day,LocalTime time,LocalTime selectedEnd) {
+        edit(original,day,time,selectedEnd,null);
+    }
+    private void edit(Event original,DayOfWeek day,LocalTime time,LocalTime selectedEnd,CampusMap.Building initialPlace) {
         JDialog dialog=new JDialog(SwingUtilities.getWindowAncestor(this),original==null?"일정 추가":"일정 편집",Dialog.ModalityType.APPLICATION_MODAL);
         JTextField title=new JTextField(original==null?"":original.title());
         TimePicker start=new TimePicker(false); start.setTime(original==null?time:original.start());
         LocalTime until=selectedEnd;
         TimePicker end=new TimePicker(true); end.setTime(original==null?until:original.end());
         JTextField query=new JTextField();JComboBox<CampusMap.Building> places=new JComboBox<>();
-        JComboBox<Category> category=new JComboBox<>(Category.values());category.setSelectedItem(original==null?Category.APPOINTMENT:original.category());
+        JComboBox<Category> category=new JComboBox<>(Category.values());category.setSelectedItem(original==null?Category.CLASS:original.category());
         JTextArea note=new JTextArea(original==null?"":original.note(),3,25);note.setLineWrap(true);
         List<CampusMap.Building> choices=map.buildings().stream().sorted(Comparator
                 .comparing((CampusMap.Building b)->!model.isFavorite(b.id())).thenComparing(CampusMap.Building::name)).toList();
@@ -75,14 +82,14 @@ public final class TimetablePanel extends JPanel {
             if(previous!=null&&previous.name().toLowerCase(Locale.ROOT).contains(q))places.setSelectedItem(previous);
             else if(places.getItemCount()==2)places.setSelectedIndex(1);
         };filter.run();
-        if(original!=null)places.setSelectedItem(map.building(original.buildingId()));
+        places.setSelectedItem(original==null?initialPlace:map.building(original.buildingId()));
         query.getDocument().addDocumentListener(new DocumentListener(){public void insertUpdate(DocumentEvent e){filter.run();}public void removeUpdate(DocumentEvent e){filter.run();}public void changedUpdate(DocumentEvent e){filter.run();}});
         JPanel days=Theme.transparent(new FlowLayout(FlowLayout.LEFT,3,0));Map<DayOfWeek,JCheckBox> checks=new EnumMap<>(DayOfWeek.class);
         Set<DayOfWeek> selected=new HashSet<>();if(original==null||!original.recurring())selected.add(day);else service.group(original).forEach(e->selected.add(e.weekday()));
         String[] labels={"월","화","수","목","금","토","일"};
         for(DayOfWeek d:DayOfWeek.values()){JCheckBox c=new JCheckBox(labels[d.getValue()-1],selected.contains(d));c.setOpaque(false);c.setFont(Theme.font(13,Font.PLAIN));checks.put(d,c);days.add(c);}
-        JRadioButton once = new JRadioButton("선택한 날짜만", original == null || !original.recurring());
-        JRadioButton repeat = new JRadioButton("매주 반복", original != null && original.recurring());
+        JRadioButton once = new JRadioButton("선택한 날짜만", original != null && !original.recurring());
+        JRadioButton repeat = new JRadioButton("매주 반복", original == null || original.recurring());
         once.setOpaque(false); repeat.setOpaque(false);
         ButtonGroup modes = new ButtonGroup(); modes.add(once); modes.add(repeat);
         JPanel mode = Theme.transparent(new FlowLayout(FlowLayout.LEFT, 8, 0)); mode.add(once); mode.add(repeat);

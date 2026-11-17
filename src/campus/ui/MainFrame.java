@@ -339,7 +339,11 @@ public final class MainFrame extends JFrame {
         noteTimer.stop();
         if(unsaved && !persist())return;
         if(folders.isBusy())return;
-        if(event!=null&&event.recurring()) {
+        if(event==null) {
+            timetable.addEvent(selectedDate,selectedBuilding);
+            return;
+        }
+        if(event.recurring()) {
             timetable.refresh(selectedDate);
             timetable.editEvent(event);return;
         }

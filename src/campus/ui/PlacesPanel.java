@@ -24,17 +24,13 @@ final class PlacesPanel {
     private final JLabel selectedName = Theme.heading("지도에서 건물을 선택하세요", 13);
     private final JLabel selectedDetail = Theme.label("건물 검색과 지도 클릭을 지원합니다", 11, Theme.MUTED);
     private final JButton favoriteButton;
-    private final JButton buildingEventButton;
-    private final JButton renameButton;
     private boolean refreshing;
 
     PlacesPanel(MainFrame frame, CampusMap data, PlannerModel model) {
         this.frame = frame;
         this.data = data;
         this.model = model;
-        renameButton=Theme.button("이름 변경",false,()->frame.renamePlace(frame.selectedBuilding()));
         favoriteButton = Theme.button("☆ 즐겨찾기", false, frame::toggleFavorite);
-        buildingEventButton = Theme.button("이곳에 일정 추가", true, () -> frame.edit(null, false));
         JPanel top = Theme.transparent(new GridBagLayout());
         GridBagConstraints c = new GridBagConstraints();
         c.gridx = 0;
@@ -88,10 +84,6 @@ final class PlacesPanel {
         bottom.add(selectedDetail,c);
         c.gridy++;
         bottom.add(favoriteButton,c);
-        c.gridy++;
-        bottom.add(buildingEventButton,c);
-        c.gridy++;
-        bottom.add(renameButton,c);
         panel.add(bottom,BorderLayout.SOUTH);
         favoritesOnly.addActionListener(e -> refreshBuildings());
         search.getDocument().addDocumentListener(new DocumentListener() {
@@ -120,8 +112,6 @@ final class PlacesPanel {
         Building selectedBuilding=frame.selectedBuilding();
         boolean selected=selectedBuilding!=null;
         favoriteButton.setEnabled(selected);
-        renameButton.setEnabled(selected);
-        buildingEventButton.setEnabled(selected);
         if(!selected)return;
         selectedName.setText(selectedBuilding.name());
         selectedName.setToolTipText(selectedBuilding.name());

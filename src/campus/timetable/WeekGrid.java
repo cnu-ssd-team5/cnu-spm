@@ -20,7 +20,7 @@ final class WeekGrid extends JPanel {
     private final RangeEditor editor;
     private final Map<Rectangle,Event> boxes = new LinkedHashMap<>();
     private int first = 8, last = 24;
-    private static final int LEFT = 56, TOP = 38, HOUR = 72, SNAP = 5;
+    private static final int LEFT = 56, TOP = 38, HOUR = 72, START_SNAP = 30, END_SNAP = 5;
     private Point anchor;
     private DayOfWeek dragDay;
     private boolean dragging, suppressClick;
@@ -92,8 +92,8 @@ final class WeekGrid extends JPanel {
     Selection selectionBetween(DayOfWeek day, int fromY, int toY) {
         double a=first*60+(fromY-TOP)*60.0/HOUR;
         double b=first*60+(toY-TOP)*60.0/HOUR;
-        int start=Math.max(first*60,Math.min(1440-SNAP,(int)Math.floor(Math.min(a,b)/SNAP)*SNAP));
-        int end=Math.max(start+SNAP,Math.min(1440,(int)Math.ceil(Math.max(a,b)/SNAP)*SNAP));
+        int start=Math.max(first*60,Math.min(1440-START_SNAP,(int)Math.floor(Math.min(a,b)/START_SNAP)*START_SNAP));
+        int end=Math.max(start+END_SNAP,Math.min(1440,(int)Math.ceil(Math.max(a,b)/END_SNAP)*END_SNAP));
         return new Selection(day,LocalTime.of(start/60,start%60),end==1440?LocalTime.MAX:LocalTime.of(end/60,end%60));
     }
     JPopupMenu menuAt(Point point) {
@@ -101,7 +101,7 @@ final class WeekGrid extends JPanel {
         if(selected==null && !inGrid(point)) return null;
         DayOfWeek day=selected==null?dayAt(point):selected.recurring()?selected.weekday():selected.date().getDayOfWeek();
         int minute=first*60+(point.y-TOP)*60/HOUR;
-        int startMinute=Math.max(0,Math.min(1440-SNAP,minute/SNAP*SNAP));
+        int startMinute=Math.max(0,Math.min(1440-START_SNAP,minute/START_SNAP*START_SNAP));
         LocalTime start=selected==null?LocalTime.of(startMinute/60,startMinute%60):selected.start();
         LocalTime end=selected==null?(startMinute+60>=1440?LocalTime.MAX:start.plusHours(1)):selected.end();
         JPopupMenu menu=new JPopupMenu();
@@ -120,7 +120,7 @@ final class WeekGrid extends JPanel {
     private int y(LocalTime time) { return TOP+((time.equals(LocalTime.MAX)?1440:time.toSecondOfDay()/60)-first*60)*HOUR/60; }
     @Override public String getToolTipText(MouseEvent e) {
         Event v=hit(e.getPoint());
-        if(v==null)return "빈 시간대를 위아래로 드래그하여 일정을 추가하세요 (5분 단위, Esc로 취소)";
+        if(v==null)return "빈 시간대를 위아래로 드래그하여 일정을 추가하세요 (시작 30분·종료 5분 단위, Esc로 취소)";
         var b=map.building(v.buildingId());
         return v.title()+" · "+TimePicker.display(v.start())+"–"+TimePicker.display(v.end())+" · "
                 +(b==null?"장소 없음":b.name())+" · "+(v.recurring()?"매주 반복":v.date().toString());
