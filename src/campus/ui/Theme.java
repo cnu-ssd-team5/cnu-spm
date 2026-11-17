@@ -8,12 +8,12 @@ import java.util.Enumeration;
 import java.util.List;
 
 public final class Theme {
-    static final Color BACKGROUND = new Color(245, 247, 251);
-    static final Color INK = new Color(30, 42, 61);
+    public static final Color BACKGROUND = new Color(245, 247, 251);
+    public static final Color INK = new Color(30, 42, 61);
     public static final Color MUTED = new Color(106, 119, 137);
-    static final Color BLUE = new Color(40, 100, 230);
-    static final Color PALE_BLUE = new Color(234, 241, 255);
-    static final Color LINE = new Color(225, 231, 240);
+    public static final Color BLUE = new Color(40, 100, 230);
+    public static final Color PALE_BLUE = new Color(234, 241, 255);
+    public static final Color LINE = new Color(225, 231, 240);
     public static final Color WARNING = new Color(172, 80, 33);
 
     // 맑은 고딕이 없는 PC(영문 Windows, Mac, Linux)에서도 한글이 깨지지 않도록 설치된 폰트 중에서 고릅니다.
@@ -92,7 +92,7 @@ public final class Theme {
         return button;
     }
 
-    static JPanel card(LayoutManager layout) {
+    public static JPanel card(LayoutManager layout) {
         JPanel panel = new JPanel(layout) {
             @Override protected void paintComponent(Graphics graphics) {
                 Graphics2D g = (Graphics2D) graphics.create();
@@ -133,7 +133,7 @@ public final class Theme {
                 BorderFactory.createLineBorder(LINE), new EmptyBorder(8, 9, 8, 9)));
     }
 
-    static String html(String text) {
+    public static String html(String text) {
         return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
     }
 }

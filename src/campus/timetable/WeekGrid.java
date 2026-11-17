@@ -23,6 +23,12 @@ final class WeekGrid extends JPanel {
         setBackground(Color.WHITE);
         setToolTipText("");
         addMouseListener(new MouseAdapter() {
+            public void mouseClicked(MouseEvent e) {
+                if(SwingUtilities.isLeftMouseButton(e)&&e.getClickCount()==2) {
+                    JPopupMenu menu=menuAt(e.getPoint());
+                    if(menu!=null)((JMenuItem)menu.getComponent(0)).doClick();
+                }
+            }
             public void mousePressed(MouseEvent e) { popup(e); }
             public void mouseReleased(MouseEvent e) { popup(e); }
             private void popup(MouseEvent e) {
@@ -49,11 +55,11 @@ final class WeekGrid extends JPanel {
     }
     void refresh() {
         first=Math.min(8,service.events().stream().mapToInt(e->e.start().getHour()).min().orElse(8));
-        last=Math.max(20,service.events().stream().mapToInt(e->Math.min(24,e.end().getHour()+1)).max().orElse(20));
-        setPreferredSize(new Dimension(980,TOP+(last-first)*HOUR+12));revalidate();repaint();
+        last=Math.max(24,service.events().stream().mapToInt(e->Math.min(24,e.end().getHour()+1)).max().orElse(20));
+        setPreferredSize(new Dimension(480,TOP+(last-first)*HOUR+12));revalidate();repaint();
     }
     private int columnWidth(){return Math.max(1,(getWidth()-LEFT)/7);}
-    private int y(LocalTime time){return TOP+(time.toSecondOfDay()/60-first*60)*HOUR/60;}
+    private int y(LocalTime time){return TOP+((time.equals(LocalTime.MAX)?1440:time.toSecondOfDay()/60)-first*60)*HOUR/60;}
     public String getToolTipText(MouseEvent e) {
         for(var box:boxes.entrySet())if(box.getKey().contains(e.getPoint())) {
             Event v=box.getValue();var b=map.building(v.buildingId());
@@ -90,7 +96,7 @@ final class WeekGrid extends JPanel {
                 boxes.put(r,e);g.setColor(Color.getHSBColor(Math.floorMod(e.title().hashCode(),360)/360f,.18f,.97f));g.fillRoundRect(r.x,r.y,r.width,r.height,8,8);
                 Graphics2D text=(Graphics2D)g.create();text.clip(r);text.setColor(new Color(40,50,70));
                 text.drawString(e.title(),r.x+5,r.y+16);
-                if(r.height>34)text.drawString(e.start()+"–"+e.end(),r.x+5,r.y+32);
+                if(r.height>34)text.drawString(TimePicker.display(e.start())+"–"+TimePicker.display(e.end()),r.x+5,r.y+32);
                 var b=map.building(e.buildingId());if(r.height>50&&b!=null)text.drawString(b.name(),r.x+5,r.y+48);
                 text.dispose();
             }

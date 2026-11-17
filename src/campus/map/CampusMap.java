@@ -45,9 +45,11 @@ public final class CampusMap {
     final Map<Long, Node> nodes;
     final Map<Long, Way> osmWays;
     private final List<MapWay> ways = new ArrayList<>();
+    private final Map<String, String> originalNames = new HashMap<>();
     private final Map<String, Building> byId = new LinkedHashMap<>();
     private List<GeoPoint> boundary = List.of();
     private double minLat, maxLat, minLon, maxLon;
+    private double[] extractBounds;
 
     private CampusMap(Reader source) {
         nodes = source.nodes;
@@ -89,6 +91,17 @@ public final class CampusMap {
     public List<Building> buildings() { return Collections.unmodifiableList(buildings); }
     public List<MapWay> ways() { return Collections.unmodifiableList(ways); }
     public Building building(String id) { return byId.get(id); }
+    public String originalName(String id) { return originalNames.getOrDefault(id, building(id).name()); }
+    public void putPlace(Building place) {
+        originalNames.putIfAbsent(place.id(), place.name());
+        buildings.removeIf(b -> b.id().equals(place.id()));
+        buildings.add(place); byId.put(place.id(), place);
+    }
+    public void removePlace(String id) {
+        if (!id.startsWith("pin:")) return;
+        buildings.removeIf(b -> b.id().equals(id)); byId.remove(id);
+    }
+
     public double minLat() { return minLat; }
     public double maxLat() { return maxLat; }
     public double minLon() { return minLon; }
@@ -101,6 +114,7 @@ public final class CampusMap {
                 .filter(w -> name(w.tags).contains("전남대학교") || name(w.tags).contains("Chonnam"))
                 .max(Comparator.comparingInt(w -> w.refs.size())).orElse(null);
         if (campus == null) throw new IOException("전남대학교 캠퍼스 경계가 포함된 OSM 파일이 필요합니다.");
+        extractBounds=source.bounds;
         boundary = points(campus.refs, source.nodes);
         if (boundary.size() < 4) throw new IOException("캠퍼스 경계 노드가 누락되었습니다.");
         minLat = boundary.stream().mapToDouble(GeoPoint::lat).min().orElseThrow();
@@ -126,11 +140,23 @@ public final class CampusMap {
                 if (addBuilding("w" + way.id, way.tags, outline)) buildingRefs.put("w" + way.id, way.refs);
             }
             String kind = kind(way.tags);
-            if (kind != null && outline.stream().anyMatch(this::inDisplayBounds)) {
+            if (kind != null && outline.stream().anyMatch(this::inExtractBounds)) {
                 ways.add(new MapWay("w" + way.id, kind, outline));
                 if ("water".equals(kind)) obstacles.add(outline);
             }
         }
+        for(Node node:nodes.values())if(busPlatform(node.tags))addBusStop("bus:n"+node.id,node.tags,node.point);
+        for(Way way:osmWays.values())if(busPlatform(way.tags)) {
+            List<GeoPoint> shape=points(way.refs,nodes);
+            if(!shape.isEmpty())addBusStop("bus:w"+way.id,way.tags,centroid(shape));
+        }
+        for(Node node:nodes.values()) {
+            if(!"stop_position".equals(node.tags.get("public_transport"))||!"yes".equals(node.tags.get("bus")))continue;
+            String title=name(node.tags);
+            if(buildings.stream().noneMatch(b->b.id().startsWith("bus:")&&originalNames.get(b.id()).equals(title)&&distance(b.center(),node.point)<75))
+                addBusStop("bus:n"+node.id,node.tags,node.point);
+        }
+        buildings.forEach(b -> originalNames.putIfAbsent(b.id(), b.name().equals("이름없는 건물")?"이름 없는 건물 · "+b.id():b.name()));
         if (buildings.isEmpty()) throw new IOException("캠퍼스 건물이 없습니다.");
         buildings.sort(Comparator.comparing(Building::name, Collator.getInstance(Locale.KOREAN)));
     }
@@ -140,7 +166,7 @@ public final class CampusMap {
         GeoPoint center = centroid(outline);
         if (!inside(center, boundary) && outline.stream().noneMatch(p -> inside(p, boundary))) return false;
         String title = name(tags);
-        if (title.isBlank()) title = "이름 없는 건물 · " + id;
+        if (title.isBlank()) title = "이름없는 건물";
         Building building = new Building(id, title, outline, center);
         buildings.add(building);
         byId.put(id, building);
@@ -152,14 +178,21 @@ public final class CampusMap {
                 && p.lon >= minLon-0.00055 && p.lon <= maxLon+0.00055;
     }
 
-    boolean nearCampus(GeoPoint p) {
-        if (!inDisplayBounds(p)) return false;
-        if (inside(p, boundary)) return true;
-        for (int i = 1; i < boundary.size(); i++) {
-            if (segmentDistance(p, boundary.get(i-1), boundary.get(i)) < 42) return true;
-        }
-        return false;
+    private static boolean busPlatform(Map<String,String> tags) {
+        return "bus_stop".equals(tags.get("highway"))
+                || "platform".equals(tags.get("public_transport"))&&"yes".equals(tags.get("bus"));
     }
+    private void addBusStop(String id,Map<String,String> tags,GeoPoint point) {
+        String title=name(tags);
+        if(title.isBlank()||!inExtractBounds(point))return;
+        putPlace(new Building(id,title,List.of(point),point));
+        originalNames.put(id,title);
+    }
+    private boolean inExtractBounds(GeoPoint p) {
+        return extractBounds==null?inDisplayBounds(p):p.lat>=extractBounds[0]&&p.lon>=extractBounds[1]
+                &&p.lat<=extractBounds[2]&&p.lon<=extractBounds[3];
+    }
+    boolean nearCampus(GeoPoint p) { return inExtractBounds(p); }
 
     private static String kind(Map<String,String> tags) {
         if ("water".equals(tags.get("natural")) || "riverbank".equals(tags.get("waterway")) || tags.containsKey("water")) return "water";
@@ -268,6 +301,7 @@ public final class CampusMap {
         final Map<Long,Node> nodes = new LinkedHashMap<>();
         final Map<Long,Way> ways = new LinkedHashMap<>();
         final List<Relation> relations = new ArrayList<>();
+        double[] bounds;
         String type;
         long id;
         GeoPoint point;
@@ -276,7 +310,10 @@ public final class CampusMap {
         List<Member> members;
         @Override public void startElement(String uri,String local,String q,Attributes a) throws SAXException {
             try {
-                if (Set.of("node","way","relation").contains(q)) {
+                if(q.equals("bounds")) {
+                    bounds=new double[]{Double.parseDouble(a.getValue("minlat")),Double.parseDouble(a.getValue("minlon")),
+                            Double.parseDouble(a.getValue("maxlat")),Double.parseDouble(a.getValue("maxlon"))};
+                } else if (Set.of("node","way","relation").contains(q)) {
                     type = q; id = Long.parseLong(a.getValue("id")); tags = new HashMap<>();
                     if (q.equals("node")) point = new GeoPoint(Double.parseDouble(a.getValue("lat")),Double.parseDouble(a.getValue("lon")));
                     if (q.equals("way")) refs = new ArrayList<>();

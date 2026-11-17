@@ -34,6 +34,11 @@ public final class CourseFolderSync {
         Map<String,Set<String>> transfers=new TreeMap<>();
         for(String id:next.stringPropertyNames()) {
             String old=previous.getProperty(id),target=next.getProperty(id);
+            if(old==null) {
+                String group=groupId(id);
+                old=previous.stringPropertyNames().stream().filter(key->groupId(key).equals(group))
+                        .sorted().map(previous::getProperty).findFirst().orElse(null);
+            }
             if(old!=null&&!old.equals(target))transfers.computeIfAbsent(old,k->new TreeSet<>()).add(target);
         }
         // 여러 일정이 같은 자료 폴더를 사용하면 한 번만 합친다.
@@ -55,6 +60,9 @@ public final class CourseFolderSync {
             previous=next;
         } finally {Files.deleteIfExists(temporary);}
         return changed;
+    }
+    private static String groupId(String id) {
+        return id.startsWith("tt:")&&id.lastIndexOf(':')>3?id.substring(3,id.lastIndexOf(':')):id;
     }
     private void merge(Path from,Path to,boolean copy)throws IOException {
         service.checked(from);service.checked(to);

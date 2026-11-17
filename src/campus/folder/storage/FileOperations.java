@@ -70,7 +70,7 @@ public final class FileOperations {
             if (p.equals(service.getRoot())) throw new IOException("Cannot delete storage root");
             Path saved = trash.resolve(UUID.randomUUID() + "_" + p.getFileName());
             Files.move(p, saved);
-            steps.push(() -> Files.move(saved, service.checked(p)));
+            steps.push(() -> { Files.createDirectories(service.checked(p.getParent())); Files.move(saved, service.checked(p)); });
         }
     }
     public void paste(List<Path> paths, Path destination, boolean cut) throws IOException {

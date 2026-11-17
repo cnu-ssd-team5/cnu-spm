@@ -26,9 +26,9 @@ final class WeekBar {
         previous.add(weekTitle);
         previous.add(Theme.button("›", false, () -> frame.changeDate(frame.selectedDate().plusWeeks(1))));
         navigation.add(previous, BorderLayout.WEST);
-        navigation.add(Theme.button("오늘", false, () -> frame.changeDate(LocalDate.now())), BorderLayout.EAST);
+        navigation.add(Theme.button("오늘", false, () -> frame.changeDate(campus.calendar.PlannerTime.today())), BorderLayout.EAST);
         panel.add(navigation, BorderLayout.NORTH);
-        weekDays.setPreferredSize(new Dimension(0, 70));
+        weekDays.setPreferredSize(new Dimension(0, 58));
         panel.add(weekDays, BorderLayout.CENTER);
     }
 
@@ -39,7 +39,7 @@ final class WeekBar {
         for (int i = 0; i < 7; i++) {
             LocalDate date = monday.plusDays(i);
             List<Occurrence> daily = model.occurrences(date);
-            long count = daily.stream().filter(o -> !o.canceled()).count();
+            long count = daily.stream().filter(o -> !o.canceled()).count()+model.deadlines(date).size();
             String day = date.getDayOfWeek().getDisplayName(TextStyle.SHORT,Locale.KOREAN);
             boolean chosen = date.equals(selectedDate);
             JButton button = Theme.button("<html><center>"+day+"  "+date.getDayOfMonth()+"<br><font size='2'>"+(count==0 ? "일정 없음" : count+"개 일정")+"</font></center></html>",chosen,() -> frame.changeDate(date));
@@ -48,8 +48,8 @@ final class WeekBar {
                 button.setForeground(Theme.INK);
                 if(chosen)button.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(Theme.BLUE,2),BorderFactory.createEmptyBorder(7,11,7,11)));
             }
-            button.putClientProperty("calendar.today",date.equals(LocalDate.now()));
-            if (date.equals(LocalDate.now())) button.setToolTipText("오늘");
+            button.putClientProperty("calendar.today",date.equals(campus.calendar.PlannerTime.today()));
+            if (date.equals(campus.calendar.PlannerTime.today())) button.setToolTipText("오늘");
             weekDays.add(button);
         }
     }

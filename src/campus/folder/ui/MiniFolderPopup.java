@@ -23,6 +23,7 @@ public final class MiniFolderPopup extends JDialog {
     private static List<Path> clipboard=new ArrayList<>();
     private static boolean cut;
     private int loadVersion;
+    private volatile boolean disposed;
     private final AWTEventListener side=event-> {
         if(event instanceof MouseEvent) {
             MouseEvent e=(MouseEvent)event;
@@ -175,6 +176,13 @@ public final class MiniFolderPopup extends JDialog {
             }
         });
     }
+    @Override public void dispose() {
+        if(working)return;
+        boolean wasOpen=isDisplayable();
+        disposed=true;
+        super.dispose();
+        if(wasOpen)controller.previewClosed(building);
+    }
     private void close() {
         if(!working) {
             dispose();
@@ -241,7 +249,7 @@ public final class MiniFolderPopup extends JDialog {
         location.setText(controller.displayName(building)+" / "+building.relativize(current));
         new SwingWorker<List<Path>,Void>() {
             protected List<Path> doInBackground()throws Exception {
-                return Files.exists(folder)?service.list(folder):java.util.List.of();
+                return !disposed&&Files.exists(folder)?service.list(folder):java.util.List.of();
             }
             protected void done() {
                 if(version!=loadVersion)return;

@@ -1,6 +1,7 @@
 package campus.timetable;
 
 import campus.model.PlannerModel;
+import campus.calendar.*;
 import campus.model.PlannerModel.Event;
 import campus.model.PlannerModel.Category;
 import java.time.*;
@@ -9,8 +10,10 @@ import java.util.*;
 /** 여러 요일을 기존 Event 여러 개로 저장하여 지도·휴강·XML 형식을 유지한다. */
 public final class TimetableService {
     private final PlannerModel model;
+    private Semester semester;
+    public void semester(Semester value) { semester=value; }
     public TimetableService(PlannerModel model) { this.model=model; }
-    public List<Event> events() { return model.events().stream().filter(Event::recurring).toList(); }
+    public List<Event> events() { return (semester==null?model.events():model.events(semester)).stream().filter(Event::recurring).toList(); }
     public List<Event> group(Event event) {
         if(event==null)return List.of();
         String root=root(event);
@@ -31,8 +34,7 @@ public final class TimetableService {
     }
     public boolean overlaps(Event original,List<Event> proposed) {
         Set<String> excluded=new HashSet<>();group(original).forEach(e->excluded.add(e.id()));
-        return proposed.stream().anyMatch(p->events().stream().anyMatch(e->!excluded.contains(e.id())
-                &&p.weekday()==e.weekday()&&p.start().isBefore(e.end())&&e.start().isBefore(p.end())));
+        return proposed.stream().flatMap(p->model.conflicts(p,semester).stream()).anyMatch(e->!excluded.contains(e.id()));
     }
     public void apply(Event original,List<Event> proposed) {
         synchronized(model) {
@@ -40,7 +42,7 @@ public final class TimetableService {
             // 새 시간표 그룹은 요일별 ID가 안정적이므로 시간 수정 시 휴강 예외가 유지된다.
             Set<String> ids=new HashSet<>();proposed.forEach(e->ids.add(e.id()));
             old.stream().filter(e->!ids.contains(e.id())).forEach(e->model.removeEvent(e.id()));
-            proposed.forEach(model::putEvent);
+            proposed.forEach(e->{if(semester==null)model.putEvent(e);else model.putEvent(e,semester);});
         }
     }
     public void delete(Event original) { group(original).forEach(e->model.removeEvent(e.id())); }

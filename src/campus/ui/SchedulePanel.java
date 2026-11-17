@@ -82,7 +82,7 @@ final class SchedulePanel {
         schedule.removeAll();
         long count = occurrences.stream().filter(o -> !o.canceled()).count();
         long canceled = occurrences.size()-count;
-        daySummary.setText("진행 "+count+"개"+(canceled==0 ? "" : " · 휴강/제외 "+canceled+"개"));
+        daySummary.setText("진행 "+count+"개"+(canceled==0 ? "" : " · 휴강/제외 "+canceled+"개")+(model.deadlines(frame.selectedDate()).isEmpty()?"":" · 할일 "+model.deadlines(frame.selectedDate()).size()+"개"));
         GridBagConstraints c = new GridBagConstraints();
         c.gridx=0;
         c.gridy=0;
@@ -122,6 +122,12 @@ final class SchedulePanel {
             }
         }
         if (occupiedUntil != null) addSlotButton(ScheduleSlot.after(occupiedUntil), c);
+        for(var deadline:model.deadlines(frame.selectedDate())) {
+            JButton item=Theme.button(deadline.title()+" · "+(deadline.completed()?"완료":"미완료"),false,
+                    ()->frame.editDeadline(deadline,deadline.date()));
+            item.setForeground(deadline.completed()?Theme.MUTED:new Color(196,54,54));
+            schedule.add(item,c);c.gridy++;
+        }
         c.weighty=1;
         c.fill=GridBagConstraints.BOTH;
         schedule.add(Theme.transparent(new BorderLayout()),c);

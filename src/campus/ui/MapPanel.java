@@ -18,6 +18,12 @@ final class MapPanel extends JPanel {
     private final CampusMap data;
     private java.util.function.Function<Building,JPopupMenu> routeMenu;
     void setRouteMenu(java.util.function.Function<Building,JPopupMenu> menu){routeMenu=menu;}
+    private Consumer<GeoPoint> pinCreator;
+    void setPinCreator(Consumer<GeoPoint> action) { pinCreator=action; }
+    private GeoPoint geo(Point point) {
+        return new GeoPoint(centerLat-(point.y-getHeight()/2.0-panY)/scale(),
+                centerLon+(point.x-getWidth()/2.0-panX)/(longitudeScale*scale()));
+    }
     private campus.folder.FolderModule folders;
     private final PlannerModel model;
     private final Consumer<Building> selection;
@@ -83,6 +89,11 @@ final class MapPanel extends JPanel {
         if(!e.isPopupTrigger()||routeMenu==null)return;
         Building building=hit(e.getPoint());
         if(building!=null)routeMenu.apply(building).show(this,e.getX(),e.getY());
+        else if(pinCreator!=null) {
+            JPopupMenu menu=new JPopupMenu();JMenuItem add=new JMenuItem("핀 추가");
+            GeoPoint point=geo(e.getPoint());add.addActionListener(action->pinCreator.accept(point));
+            menu.add(add);menu.show(this,e.getX(),e.getY());
+        }
     }
 
     void setOccurrences(List<Occurrence> occurrences, List<Leg> legs) {
@@ -102,7 +113,7 @@ final class MapPanel extends JPanel {
         searchFrom = Objects.requireNonNull(from);
         searchTo = Objects.requireNonNull(to);
         searchRoute = Objects.requireNonNull(route);
-        fit();
+        repaint();
     }
 
     void clearSearchRoute() {
@@ -118,12 +129,13 @@ final class MapPanel extends JPanel {
 
     void select(String id) {
         selectedId = id;
-        repaint();
-    }
-
-    void fit() {
-        zoom = 1;
-        panX = panY = 0;
+        Building building=data.building(id);
+        if(building!=null) {
+            Point2D p=point(building.center());
+            if(p.getX()<20||p.getX()>getWidth()-20||p.getY()<20||p.getY()>getHeight()-20) {
+                panX+=getWidth()/2.0-p.getX();panY+=getHeight()/2.0-p.getY();
+            }
+        }
         repaint();
     }
 
@@ -132,7 +144,7 @@ final class MapPanel extends JPanel {
     }
 
     private void zoomAt(double factor, Point anchor) {
-        double next = Math.max(0.65, Math.min(zoom * factor, 8));
+        double next = Math.max(0.25, Math.min(zoom * factor, 8));
         double ratio = next / zoom;
         panX = anchor.x - getWidth()/2.0 - (anchor.x - getWidth()/2.0 - panX) * ratio;
         panY = anchor.y - getHeight()/2.0 - (anchor.y - getHeight()/2.0 - panY) * ratio;
@@ -166,6 +178,11 @@ final class MapPanel extends JPanel {
     }
 
     private Building hit(Point location) {
+        // 점 장소가 건물 외곽 안에 놓여 있어도 먼저 선택할 수 있어야 한다.
+        Building pointPlace=data.buildings().stream().filter(b->b.outline().size()==1)
+                .filter(b->point(b.center()).distance(location)<12)
+                .min(Comparator.comparingDouble(b->point(b.center()).distance(location))).orElse(null);
+        if(pointPlace!=null)return pointPlace;
         Building near = null;
         double distance = 15;
         for (Building building : data.buildings()) {
@@ -224,6 +241,12 @@ final class MapPanel extends JPanel {
         for (Building building : data.buildings()) {
             boolean selected = building.id().equals(selectedId);
             boolean scheduled = onRoute.contains(building.id());
+            if(building.outline().size()==1) {
+                Point2D xy=point(building.center());
+                g.setColor(selected?Theme.BLUE:building.id().startsWith("pin:")?new Color(194,85,65):new Color(48,145,100));
+                g.fill(new Ellipse2D.Double(xy.getX()-6,xy.getY()-6,12,12));
+                g.setColor(Color.WHITE);g.draw(new Ellipse2D.Double(xy.getX()-6,xy.getY()-6,12,12));continue;
+            }
             Path2D shape = path(building.outline(), true);
             g.setColor(selected ? new Color(134, 174, 252) : scheduled ? new Color(174, 199, 250) : new Color(218, 225, 231));
             g.fill(shape);
@@ -240,7 +263,7 @@ final class MapPanel extends JPanel {
         g.setFont(Theme.font(11, Font.PLAIN));
         for (Building building : data.buildings()) {
             boolean important = onRoute.contains(building.id()) || building.id().equals(selectedId) || model.isFavorite(building.id());
-            if (!important && (zoom < 1.8 || building.name().startsWith("이름 없는"))) continue;
+            if (!important && (zoom < 1.8 || building.name().replace(" ","").startsWith("이름없는"))) continue;
             Point2D xy = point(building.center());
             String text = building.name();
             FontMetrics fm = g.getFontMetrics();

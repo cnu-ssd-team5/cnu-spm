@@ -24,12 +24,17 @@ public final class RouteService {
     private record QueueItem(int node, double distance) { }
 
     private final CampusMap map;
-    private final WalkGraph walk;
+    private WalkGraph walk;
     private final Map<String, Route> routeCache = new HashMap<>();
 
     public RouteService(CampusMap map) throws IOException {
         this.map = map;
         this.walk = new WalkGraph(map);
+    }
+
+    public synchronized void refreshPlaces() throws IOException {
+        walk = new WalkGraph(map);
+        routeCache.clear();
     }
 
     public int routingNodeCount() { return walk.graph.size(); }

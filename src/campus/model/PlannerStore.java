@@ -1,4 +1,7 @@
 package campus.model;
+import campus.calendar.Semester;
+import campus.calendar.PlannerTime;
+
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -48,7 +51,7 @@ public final class PlannerStore {
                 throw new IOException("개인 일정 파일 형식이 올바르지 않습니다.");
             }
             String version = root.getAttribute("version");
-            if (!version.isEmpty() && !"1".equals(version)) {
+            if (!version.isEmpty() && !"1".equals(version) && !"2".equals(version) && !"3".equals(version)) {
                 throw new IOException("지원하지 않는 개인 일정 파일 버전입니다: " + version);
             }
             PlannerModel model = new PlannerModel();
@@ -71,7 +74,11 @@ public final class PlannerStore {
                         weekday.isEmpty() ? null : DayOfWeek.valueOf(weekday),
                         date.isEmpty() ? null : LocalDate.parse(date),
                         childText(element, "note"));
-                model.putEvent(event);
+                String semester = element.getAttribute("semester");
+                if (!semester.isEmpty()) model.putEvent(event, Semester.parse(semester));
+                else if (!"3".equals(version)) {
+                    model.putEvent(event, Semester.forDate(event.recurring() ? PlannerTime.today() : event.date()));
+                } else model.putEvent(event);
             }
             for (Element element : entries(root, "favorites", "building")) {
                 String id = requiredAttribute(element, "id");
@@ -82,16 +89,39 @@ public final class PlannerStore {
             for (Element element : entries(root, "cancellations", "occurrence")) {
                 String eventId = requiredAttribute(element, "eventId");
                 LocalDate date = LocalDate.parse(requiredAttribute(element, "date"));
-                // Old orphan exceptions can survive earlier edits. They do not cancel a new event.
-                PlannerModel.Occurrence occurrence = model.occurrences(date).stream()
-                        .filter(value -> value.event().id().equals(eventId)).findFirst().orElse(null);
-                if (occurrence != null && !occurrence.canceled()) {
-                    model.toggleCancellation(eventId, date);
-                }
+                // Keep older exceptions even when their date falls outside the newly assigned term.
+                model.restoreCancellation(eventId, date);
             }
             for (Element element : entries(root, "day-notes", "day")) {
                 model.setDayNote(LocalDate.parse(requiredAttribute(element, "date")),
                         element.getTextContent());
+            }
+            Set<String> namedBuildingIds = new HashSet<>();
+            for (Element element : entries(root, "building-names", "building")) {
+                String id = requiredAttribute(element, "id");
+                if (!namedBuildingIds.add(id)) throw new IOException("중복된 건물 이름 ID가 있습니다: " + id);
+                model.renameBuilding(id, requiredAttribute(element, "name"));
+            }
+            Set<String> pinIds = new HashSet<>();
+            for (Element element : entries(root, "pins", "pin")) {
+                String id = requiredAttribute(element, "id");
+                if (!pinIds.add(id)) throw new IOException("중복된 핀 ID가 있습니다: " + id);
+                model.putPin(new PlannerModel.Pin(id, requiredAttribute(element, "name"),
+                        Double.parseDouble(requiredAttribute(element, "lat")),
+                        Double.parseDouble(requiredAttribute(element, "lon"))));
+            }
+            Set<String> deadlineIds = new HashSet<>();
+            for (Element element : entries(root, "deadlines", "deadline")) {
+                String id = requiredAttribute(element, "id");
+                if (!deadlineIds.add(id)) throw new IOException("중복된 마감 일정 ID가 있습니다: " + id);
+                String completed = element.getAttribute("completed");
+                if (!completed.isEmpty() && !"true".equals(completed) && !"false".equals(completed)) {
+                    throw new IOException("마감 일정 완료 상태가 올바르지 않습니다: " + id);
+                }
+                String completedOn = element.getAttribute("completedOn");
+                model.putDeadline(new PlannerModel.Deadline(id, requiredAttribute(element, "title"),
+                        LocalDate.parse(requiredAttribute(element, "date")), childText(element, "note"),
+                        Boolean.parseBoolean(completed), completedOn.isEmpty() ? null : LocalDate.parse(completedOn)));
             }
             return model;
         } catch (ParserConfigurationException | SAXException | RuntimeException exception) {
@@ -107,7 +137,7 @@ public final class PlannerStore {
             throw new IOException("일정 저장 형식을 준비할 수 없습니다.", exception);
         }
         Element root = document.createElement("campus-planner");
-        root.setAttribute("version", "1");
+        root.setAttribute("version", "3");
         document.appendChild(root);
         // Capture schedules and their exceptions from the same consistent model state.
         synchronized (model) {
@@ -120,6 +150,8 @@ public final class PlannerStore {
                 element.setAttribute("start", event.start().toString());
                 element.setAttribute("end", event.end().toString());
                 element.setAttribute("category", event.category().name());
+                Semester semester = model.semesterOf(event.id());
+                if (semester != null) element.setAttribute("semester", semester.id());
                 if (event.recurring()) {
                     element.setAttribute("weekday", event.weekday().name());
                 } else {
@@ -146,6 +178,33 @@ public final class PlannerStore {
                         element.setAttribute("date", entry.getKey().toString());
                         element.setTextContent(entry.getValue());
                     });
+            Element names = append(document, root, "building-names");
+            model.buildingNames().entrySet().stream().sorted(java.util.Map.Entry.comparingByKey())
+                    .forEach(entry -> {
+                        Element element = append(document, names, "building");
+                        element.setAttribute("id", entry.getKey());
+                        element.setAttribute("name", entry.getValue());
+                    });
+            Element pins = append(document, root, "pins");
+            for (PlannerModel.Pin pin : model.pins()) {
+                Element element = append(document, pins, "pin");
+                element.setAttribute("id", pin.id());
+                element.setAttribute("name", pin.name());
+                element.setAttribute("lat", Double.toString(pin.lat()));
+                element.setAttribute("lon", Double.toString(pin.lon()));
+            }
+            Element deadlines = append(document, root, "deadlines");
+            for (PlannerModel.Deadline deadline : model.deadlines()) {
+                Element element = append(document, deadlines, "deadline");
+                element.setAttribute("id", deadline.id());
+                element.setAttribute("title", deadline.title());
+                element.setAttribute("date", deadline.date().toString());
+                element.setAttribute("completed", Boolean.toString(deadline.completed()));
+                if (deadline.completedOn() != null) {
+                    element.setAttribute("completedOn", deadline.completedOn().toString());
+                }
+                append(document, element, "note").setTextContent(deadline.note());
+            }
         }
 
         Path absolute = path.toAbsolutePath().normalize();

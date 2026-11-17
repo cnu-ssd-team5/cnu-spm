@@ -30,6 +30,8 @@ public final class FolderModule implements AutoCloseable {
     private final List<Runnable> updates = new ArrayList<>();
     private final List<Runnable> detachments = new ArrayList<>();
     private boolean closed;
+    private Function<Building,Building> beforeOpen=Function.identity();
+    public void setBeforeOpen(Function<Building,Building> action) { beforeOpen=java.util.Objects.requireNonNull(action); }
 
     public FolderModule(Path dataDirectory, CampusMap map, PlannerModel model) throws IOException {
         this.map = map;
@@ -110,8 +112,18 @@ public final class FolderModule implements AutoCloseable {
 
     /** point는 지도 컴포넌트 내부 좌표다. */
     public void openAt(JComponent anchor, Point point, Building building) {
-        if(!hasFolder(building))return;
+        if(isBusy())return;
+        building=beforeOpen.apply(building);
+        if(building==null)return;
         controller.showPreview(anchor, new Point(point), key(building), this::refreshRecent);
+    }
+
+    public void openCourse(JComponent anchor,PlannerModel.Event event) {
+        if(isBusy())return;
+        Building building=map.building(event.buildingId());
+        if(building==null)return;
+        Path path=buildingsRoot.resolve(key(building)).resolve(CourseCatalog.folderName(event.title()));
+        controller.showFolderPreview(anchor,path,this::refreshRecent);
     }
 
     public boolean hasFolder(Building building) {
@@ -135,10 +147,10 @@ public final class FolderModule implements AutoCloseable {
     }
 
     public JButton searchButton() {
-        JButton button = new JButton("파일 검색");
+        JButton button=campus.ui.Theme.button("파일 검색",false,()->{});
         button.addActionListener(e -> {
             if (isBusy() || closed) return;
-            String query = JOptionPane.showInputDialog(button, "파일·폴더 이름");
+            String query = JOptionPane.showInputDialog(SwingUtilities.getWindowAncestor(button), "파일·폴더 이름");
             if (query != null && !query.isBlank()) controller.searchFiles(SwingUtilities.getWindowAncestor(button), query.strip(), this::refreshRecent);
         });
         return button;
@@ -157,12 +169,13 @@ public final class FolderModule implements AutoCloseable {
             button.setToolTipText(file == null ? null : file.getFileName().toString());
             button.setIcon(file == null ? null : new DocumentIcon(FolderService.extension(file).toUpperCase(java.util.Locale.ROOT), false, 24));
         };
+        button.putClientProperty("recent.update",update);
         updates.add(update);
         update.run();
         return button;
     }
 
-    public void refreshRecent() { updates.forEach(Runnable::run); }
+    public void refreshRecent() { List.copyOf(updates).forEach(Runnable::run); }
 
     /** 빈 지도 패널용: 최근 파일 버튼을 건물 옆에 배치하고 확대/이동 시 위치를 갱신한다. */
     public void attach(JComponent canvas, Function<Point, Building> hitTest,
@@ -179,6 +192,13 @@ public final class FolderModule implements AutoCloseable {
         }
         Runnable position = () -> {
             if (closed) return;
+            var existing=new ArrayList<>(buttons.keySet());
+            for(Building building:existing)if(!building.equals(map.building(building.id()))) {
+                JButton button=buttons.remove(building);canvas.remove(button);updates.remove(button.getClientProperty("recent.update"));
+            }
+            for(Building building:map.buildings())if(!buttons.containsKey(building)) {
+                JButton button=recentButton(building);buttons.put(building,button);canvas.add(button);
+            }
             buttons.forEach((building,button) -> {
                 java.awt.geom.Point2D p = project.apply(building);
                 int x=(int)p.getX()+18, y=(int)p.getY()-16;
@@ -193,7 +213,7 @@ public final class FolderModule implements AutoCloseable {
         ComponentAdapter resize = new ComponentAdapter() {
             public void componentResized(ComponentEvent e) { position.run(); }
         };
-        // 키보드/버튼으로 수행된 지도 fit/zoom도 감지한다. 파일 시스템 조회는 하지 않는다.
+        // 키보드/버튼으로 수행된 지도 zoom도 감지한다. 파일 시스템 조회는 하지 않는다.
         Timer positions = new Timer(100, e -> { if(canvas.isShowing())position.run(); });
         positions.start();
         canvas.addMouseMotionListener(movement);

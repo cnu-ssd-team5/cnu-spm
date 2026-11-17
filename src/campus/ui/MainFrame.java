@@ -19,6 +19,11 @@ import campus.model.PlannerStore;
 import campus.service.DayPlanService;
 import campus.service.DayPlanService.Leg;
 import campus.service.ScheduleSlot;
+import campus.calendar.*;
+import campus.places.PlaceService;
+import campus.sharing.ScheduleSharing;
+import campus.timetable.TimetablePanel;
+import campus.materials.CourseMaterialsPanel;
 
 /** 메인 창. 화면 배치와 선택한 날짜·건물을 관리하고, 변경이 생기면 저장합니다. */
 public final class MainFrame extends JFrame {
@@ -29,19 +34,23 @@ public final class MainFrame extends JFrame {
     private final PlannerModel model;
     private final Path statePath;
     private final MapPanel map;
+    private final PlaceService placeService;
+    private final CardLayout viewLayout=new CardLayout();
+    private final JPanel views=new JPanel(viewLayout);
+    private final TimetablePanel timetable;
+    private final CalendarPanel calendar;
+    private final CourseMaterialsPanel materials;
+    private String activeView="지도";
+    private final java.util.Map<String,JButton> viewButtons=new java.util.LinkedHashMap<>();
     private final campus.folder.FolderModule folders;
     private final WeekBar week;
     private final PlacesPanel places;
     private final SchedulePanel daily;
-    private LocalDate selectedDate = LocalDate.now();
+    private LocalDate selectedDate = PlannerTime.today();
     private Building selectedBuilding;
     private Building routeFrom,routeTo;
     private final JLabel mapTitle = Theme.heading("하루의 지도", 17);
     private final JLabel mapSubtitle = Theme.label(" ", 12, Theme.MUTED);
-    private final JPanel searchRouteInfo = Theme.transparent(new BorderLayout(10, 5));
-    private final JLabel searchFrom = Theme.label(" ", 11, Theme.INK);
-    private final JLabel searchTo = Theme.label(" ", 11, Theme.INK);
-    private final JLabel searchRouteNote = Theme.label(" ", 10, Theme.MUTED);
     private final JLabel mapLegend = Theme.label("● 일정 순서   ━ 도보 경로   ● 즐겨찾기", 11, Theme.MUTED);
     private RouteDialog.Result searchedRoute;
     private final JLabel saveStatus = Theme.label("기기에 자동 저장", 11, Theme.MUTED);
@@ -55,11 +64,26 @@ public final class MainFrame extends JFrame {
         this.plans = new DayPlanService(data, routes);
         this.model = model;
         this.statePath = statePath;
+        placeService=new PlaceService(data,model,routes);
+        placeService.sync();
         map = new MapPanel(data, model, this::selectBuilding);
         folders = campus.folder.FolderModule.openProject(Path.of(System.getProperty("campus.home", ".")), data, model);
         try { folders.syncSchedules(); } catch(IOException ex) { folders.close();throw ex; }
+        folders.setBeforeOpen(building->{
+            if(building.name().replace(" ","").startsWith("이름없는")) {
+                renamePlace(building);
+                Building renamed=data.building(building.id());
+                return renamed==null||renamed.name().replace(" ","").startsWith("이름없는")?null:renamed;
+            }
+            return building;
+        });
         map.connectFolders(folders);
         map.setRouteMenu(this::routeMenu);
+        map.setPinCreator(this::addPin);
+        timetable=new TimetablePanel(data,model,this::saveChanged);
+        calendar=new CalendarPanel(model,this::changeDate,date->editDeadline(null,date),
+                item->editDeadline(item,item.date()));
+        materials=new CourseMaterialsPanel(model,data,folders);
         week = new WeekBar(this, model);
         places = new PlacesPanel(this, data, model);
         daily = new SchedulePanel(this, data, model);
@@ -76,26 +100,35 @@ public final class MainFrame extends JFrame {
                 dispose();
             }
         });
-        JPanel page = new JPanel(new BorderLayout(0, 17));
+        JPanel page = new JPanel(new BorderLayout(0, 12));
         page.setBackground(Theme.BACKGROUND);
-        page.setBorder(BorderFactory.createEmptyBorder(22, 22, 14, 22));
+        page.setBorder(BorderFactory.createEmptyBorder(14, 14, 10, 14));
         page.add(header(), BorderLayout.NORTH);
-        JPanel body = Theme.transparent(new BorderLayout(16, 0));
-        places.panel.setPreferredSize(new Dimension(235, 0));
+        JPanel body = Theme.transparent(new BorderLayout(10, 0));
+        places.panel.setPreferredSize(new Dimension(205, 0));
         body.add(places.panel, BorderLayout.WEST);
 
-        JPanel center = Theme.transparent(new BorderLayout(0, 15));
+        JPanel center = Theme.transparent(new BorderLayout(0, 10));
         center.add(week.panel, BorderLayout.NORTH);
-        JPanel workspace = Theme.transparent(new BorderLayout(16, 0));
-        workspace.add(mapCard(), BorderLayout.CENTER);
-        daily.panel.setPreferredSize(new Dimension(335, 0));
+        JPanel workspace = Theme.transparent(new BorderLayout(10, 0));
+        views.setOpaque(false);
+        views.add(mapCard(),"지도");
+        views.add(viewCard(timetable),"주간시간표");
+        views.add(viewCard(calendar),"달력");
+        views.add(viewCard(materials),"과목자료");
+        workspace.add(views, BorderLayout.CENTER);
+        daily.panel.setPreferredSize(new Dimension(285, 0));
         workspace.add(daily.panel, BorderLayout.EAST);
         center.add(workspace, BorderLayout.CENTER);
         body.add(center, BorderLayout.CENTER);
         page.add(body, BorderLayout.CENTER);
         JPanel footer = Theme.transparent(new BorderLayout());
         footer.add(Theme.label("전남대학교 광주캠퍼스  ·  OSM 지도  ·  보행 속도 1.3 m/s 기준", 11, Theme.MUTED), BorderLayout.WEST);
-        footer.add(saveStatus, BorderLayout.EAST);
+        JPanel storage=Theme.transparent(new FlowLayout(FlowLayout.RIGHT,6,0));
+        storage.add(Theme.button("일정 공유",false,()->share(false)));
+        storage.add(Theme.button("일정 가져오기",false,()->share(true)));
+        storage.add(saveStatus);
+        footer.add(storage, BorderLayout.EAST);
         page.add(footer, BorderLayout.SOUTH);
         setContentPane(page);
         setSize(1420, 900);
@@ -122,22 +155,66 @@ public final class MainFrame extends JFrame {
         brand.add(text);
         header.add(brand, BorderLayout.WEST);
         JPanel actions = Theme.transparent(new FlowLayout(FlowLayout.RIGHT, 9, 6));
-        actions.add(Theme.button("최단거리 찾기", false, this::findRoute));
-        actions.add(Theme.button("주간 시간표", false, this::showTimetable));
-        actions.add(Theme.button("+ 일일 일정 추가", true, () -> edit(null, false)));
+        for(String view:List.of("지도","주간시간표","달력","과목자료")) {
+            JButton button=Theme.button(view,false,()->showView(view));viewButtons.put(view,button);actions.add(button);
+        }
+        updateViewButtons();
         header.add(actions, BorderLayout.EAST);
         return header;
     }
 
-    private void showTimetable() {
+    private JPanel viewCard(JComponent content) {
+        JPanel card=Theme.card(new BorderLayout());card.add(content);return card;
+    }
+    private void showView(String name) {
         if(folders.isBusy())return;
-        folders.closePopup();
-        new campus.timetable.TimetableDialog(this,data,model,()->{
-            unsaved=true;
-            boolean saved=persist();
-            refresh();
-            return saved;
-        }).setVisible(true);
+        noteTimer.stop(); if(unsaved&&!persist())return;
+        folders.closePopup();activeView=name;viewLayout.show(views,name);updateViewButtons();refresh();
+    }
+    private void updateViewButtons() {
+        viewButtons.forEach((name,button)->{
+            boolean selected=name.equals(activeView);
+            button.putClientProperty("calendar.fill",selected?Theme.PALE_BLUE:null);
+            button.setForeground(selected?Theme.BLUE:Theme.INK);button.repaint();
+        });
+    }
+    private boolean saveChanged() {
+        unsaved=true;boolean saved=persist();refresh();return saved;
+    }
+    void editDeadline(PlannerModel.Deadline item,LocalDate date) {
+        var result=DeadlineDialog.open(this,date,item);if(result==null)return;
+        if(result.deleted())model.removeDeadline(result.deadline().id());else model.putDeadline(result.deadline());
+        saveChanged();
+    }
+    private void share(boolean importing) {
+        if(folders.isBusy())return;
+        noteTimer.stop();if(unsaved&&!persist())return;
+        try {
+            if(importing) {
+                if(ScheduleSharing.importFile(this,model)) {unsaved=true;placeService.sync();saveChanged();}
+            } else ScheduleSharing.exportFile(this,model);
+        } catch(IOException ex) {JOptionPane.showMessageDialog(this,ex.getMessage(),"일정 공유",JOptionPane.ERROR_MESSAGE);}
+    }
+    private void addPin(CampusMap.GeoPoint point) {
+        if(folders.isBusy())return;
+        String name=JOptionPane.showInputDialog(this,"핀 이름");if(name==null||name.isBlank())return;
+        try {String id=placeService.addPin(name,point);selectBuilding(data.building(id));saveChanged();}
+        catch(IOException|IllegalArgumentException ex){JOptionPane.showMessageDialog(this,ex.getMessage());}
+    }
+    void renamePlace(Building building) {
+        if(building==null)return;
+        if(folders.isBusy())return;
+        String name=JOptionPane.showInputDialog(this,"장소 이름",building.name());if(name==null||name.isBlank())return;
+        try {placeService.rename(building.id(),name);selectBuilding(data.building(building.id()));saveChanged();}
+        catch(IOException|IllegalArgumentException ex){JOptionPane.showMessageDialog(this,ex.getMessage());}
+    }
+    private void deletePin(Building building) {
+        if(folders.isBusy())return;
+        if(JOptionPane.showConfirmDialog(this,"핀과 연결된 일정을 삭제할까요? 자료 파일은 보관됩니다.","핀 삭제",JOptionPane.YES_NO_OPTION)!=JOptionPane.YES_OPTION)return;
+        try {
+            placeService.removePin(building.id());selectedBuilding=null;map.select(null);
+            routeFrom=routeTo=null;showScheduleMap();saveChanged();
+        } catch(IOException ex){JOptionPane.showMessageDialog(this,ex.getMessage());}
     }
 
     private JPanel mapCard() {
@@ -148,26 +225,22 @@ public final class MainFrame extends JFrame {
         titles.add(mapSubtitle);
         top.add(titles,BorderLayout.WEST);
         JPanel controls = Theme.transparent(new FlowLayout(FlowLayout.RIGHT,5,0));
-        controls.add(folders.searchButton());
+        JButton routeSearch=Theme.button("최단거리 찾기",false,this::findRoute);
+        JButton fileSearch=folders.searchButton();
+        Dimension searchSize=new Dimension(Math.max(routeSearch.getPreferredSize().width,fileSearch.getPreferredSize().width),
+                Math.max(routeSearch.getPreferredSize().height,fileSearch.getPreferredSize().height));
+        routeSearch.setPreferredSize(searchSize);fileSearch.setPreferredSize(searchSize);
+        controls.add(routeSearch);controls.add(fileSearch);
         controls.add(Theme.button("-",false,() -> map.zoom(1/1.3)));
         controls.add(Theme.button("+",false,() -> map.zoom(1.3)));
-        controls.add(Theme.button("맞춤",false,map::fit));
         top.add(controls,BorderLayout.EAST);
         JPanel mapHeader = Theme.transparent(new BorderLayout(0, 11));
         mapHeader.add(top, BorderLayout.NORTH);
-        JPanel endpoints = Theme.transparent(new GridLayout(2, 1, 0, 4));
-        endpoints.add(searchFrom);
-        endpoints.add(searchTo);
-        searchRouteInfo.add(endpoints, BorderLayout.CENTER);
-        searchRouteInfo.add(Theme.button("일정 지도로", false, this::showScheduleMap), BorderLayout.EAST);
-        searchRouteInfo.add(searchRouteNote, BorderLayout.SOUTH);
-        searchRouteInfo.setVisible(false);
-        mapHeader.add(searchRouteInfo, BorderLayout.CENTER);
         panel.add(mapHeader,BorderLayout.NORTH);
         panel.add(map,BorderLayout.CENTER);
         JPanel legend = Theme.transparent(new BorderLayout());
         legend.add(mapLegend,BorderLayout.WEST);
-        legend.add(Theme.label("휠 확대 · 드래그 이동",11,Theme.MUTED),BorderLayout.EAST);
+        legend.add(Theme.button("일정 경로",false,this::showScheduleMap),BorderLayout.EAST);
         panel.add(legend,BorderLayout.SOUTH);
         return panel;
     }
@@ -183,6 +256,8 @@ public final class MainFrame extends JFrame {
 
     private void refresh() {
         week.refresh(selectedDate);
+        Semester semester=Semester.forDate(selectedDate);
+        timetable.refresh(semester);calendar.refresh(selectedDate,semester);materials.refresh(semester);
         List<Occurrence> occurrences = model.occurrences(selectedDate);
         List<Leg> legs = plans.legs(occurrences);
         map.setOccurrences(occurrences, legs);
@@ -195,18 +270,13 @@ public final class MainFrame extends JFrame {
 
     private void updateMapSummary() {
         boolean searching = searchedRoute != null;
-        searchRouteInfo.setVisible(searching);
         mapTitle.setText(searching ? "최단거리 검색" : "하루의 지도");
         mapLegend.setText(searching ? "출발 → 도착   ━ 최단 도보 경로" : "● 일정 순서   ━ 도보 경로   ● 즐겨찾기");
         mapSubtitle.setForeground(Theme.MUTED);
         if (searching) {
             RouteService.Route route = searchedRoute.route();
-            searchFrom.setText("출발  " + searchedRoute.from().name());
-            searchTo.setText("도착  " + searchedRoute.to().name());
-            searchFrom.setToolTipText(searchedRoute.from().name());
-            searchTo.setToolTipText(searchedRoute.to().name());
-            searchRouteNote.setText(route.message());
-            searchRouteNote.setToolTipText(route.message());
+            mapLegend.setText(searchedRoute.from().name()+" → "+searchedRoute.to().name());
+            mapLegend.setToolTipText(route.message());
             if (route.reachable()) {
                 int minutes = (int) Math.ceil(route.meters() / (RouteService.WALKING_METERS_PER_SECOND * 60));
                 mapSubtitle.setText(String.format(Locale.ROOT, "최단거리 %,.0f m · 도보 약 %d분", route.meters(), minutes));
@@ -242,6 +312,9 @@ public final class MainFrame extends JFrame {
         create.setEnabled(!folders.hasFolder(building)&&!folders.isBusy());
         create.addActionListener(e->folders.createFolder(this,building));
         menu.add(create);
+        JMenuItem add=new JMenuItem("일정 추가");add.addActionListener(e->{selectBuilding(building);edit(null,false);});menu.add(add);
+        JMenuItem rename=new JMenuItem("이름 변경");rename.addActionListener(e->renamePlace(building));menu.add(rename);
+        if(building.id().startsWith("pin:")) {JMenuItem delete=new JMenuItem("핀 삭제");delete.addActionListener(e->deletePin(building));menu.add(delete);}
         return menu;
     }
 
@@ -255,7 +328,6 @@ public final class MainFrame extends JFrame {
         routeFrom=result.from();routeTo=result.to();
         searchedRoute = result;
         map.setSearchRoute(result.from(), result.to(), result.route());
-        map.fit();
         updateMapSummary();
         revalidate();
         repaint();
@@ -276,10 +348,20 @@ public final class MainFrame extends JFrame {
     void edit(Event event, boolean repeat, ScheduleSlot slot) {
         noteTimer.stop();
         if(unsaved && !persist())return;
+        if(folders.isBusy())return;
+        if(event!=null&&event.recurring()) {
+            Semester term=model.semesterOf(event.id());
+            timetable.refresh(term==null?Semester.forDate(selectedDate):term);
+            timetable.editEvent(event);return;
+        }
         EventDialog.Result result=EventDialog.open(this,data,model,selectedDate,selectedBuilding,event,repeat,slot);
         if(result==null)return;
         if(result.deleted())model.removeEvent(result.event().id());
-        else model.putEvent(result.event());
+        else {
+            Semester term=event==null?Semester.forDate(selectedDate):model.semesterOf(event.id());
+            if(result.event().recurring())model.putEvent(result.event(),term==null?Semester.forDate(selectedDate):term);
+            else model.putEvent(result.event());
+        }
         unsaved=true;
         persist();
         refresh();

@@ -25,12 +25,14 @@ final class PlacesPanel {
     private final JLabel selectedDetail = Theme.label("건물 검색과 지도 클릭을 지원합니다", 11, Theme.MUTED);
     private final JButton favoriteButton;
     private final JButton buildingEventButton;
+    private final JButton renameButton;
     private boolean refreshing;
 
     PlacesPanel(MainFrame frame, CampusMap data, PlannerModel model) {
         this.frame = frame;
         this.data = data;
         this.model = model;
+        renameButton=Theme.button("이름 변경",false,()->frame.renamePlace(frame.selectedBuilding()));
         favoriteButton = Theme.button("☆ 즐겨찾기", false, frame::toggleFavorite);
         buildingEventButton = Theme.button("이곳에 일정 추가", true, () -> frame.edit(null, false));
         JPanel top = Theme.transparent(new GridBagLayout());
@@ -42,11 +44,11 @@ final class PlacesPanel {
         c.insets = new Insets(0,0,12,0);
         top.add(Theme.heading("캠퍼스 장소", 17),c);
         Theme.field(search);
-        search.setToolTipText("건물명 검색");
-        search.putClientProperty("JTextField.placeholderText", "건물명 검색");
+        search.setToolTipText("건물·정류장·핀 검색");
+        search.putClientProperty("JTextField.placeholderText", "건물·정류장·핀 검색");
         c.gridy++;
         c.insets = new Insets(0,0,7,0);
-        top.add(Theme.label("OSM 건물명 검색",11,Theme.MUTED),c);
+        top.add(Theme.label("건물·정류장·핀 검색",11,Theme.MUTED),c);
         c.gridy++;
         top.add(search,c);
         favoritesOnly.setFont(Theme.font(12,Font.PLAIN));
@@ -88,6 +90,8 @@ final class PlacesPanel {
         bottom.add(favoriteButton,c);
         c.gridy++;
         bottom.add(buildingEventButton,c);
+        c.gridy++;
+        bottom.add(renameButton,c);
         panel.add(bottom,BorderLayout.SOUTH);
         favoritesOnly.addActionListener(e -> refreshBuildings());
         search.getDocument().addDocumentListener(new DocumentListener() {
@@ -116,11 +120,12 @@ final class PlacesPanel {
         Building selectedBuilding=frame.selectedBuilding();
         boolean selected=selectedBuilding!=null;
         favoriteButton.setEnabled(selected);
+        renameButton.setEnabled(selected);
         buildingEventButton.setEnabled(selected);
         if(!selected)return;
         selectedName.setText(selectedBuilding.name());
         selectedName.setToolTipText(selectedBuilding.name());
-        selectedDetail.setText("OSM "+selectedBuilding.id());
+        selectedDetail.setText(selectedBuilding.name().replace(" ","").startsWith("이름없는")?" ":selectedBuilding.id().startsWith("bus:")?"정류장":selectedBuilding.id().startsWith("pin:")?"사용자 핀":" ");
         favoriteButton.setText(model.isFavorite(selectedBuilding.id()) ? "★ 즐겨찾기 해제" : "☆ 즐겨찾기 추가");
     }
 
@@ -130,10 +135,11 @@ final class PlacesPanel {
         String query=search.getText().strip().toLowerCase(Locale.ROOT);
         buildingItems.clear();
         data.buildings().stream()
+                .filter(b -> !b.name().replace(" ","").startsWith("이름없는"))
                 .filter(b -> b.name().toLowerCase(Locale.ROOT).contains(query))
                 .filter(b -> !favoritesOnly.isSelected() || model.isFavorite(b.id()))
                 .sorted(Comparator.comparing((Building b) -> !model.isFavorite(b.id()))
-                        .thenComparing(b -> b.name().startsWith("이름 없는"))
+                        .thenComparing(b -> b.name().replace(" ","").startsWith("이름없는"))
                         .thenComparing(Building::name))
                 .forEach(buildingItems::addElement);
         if(frame.selectedBuilding()!=null)buildings.setSelectedValue(frame.selectedBuilding(),true);

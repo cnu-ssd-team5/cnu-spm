@@ -14,10 +14,10 @@ public final class CourseCatalog {
     public CourseCatalog(CampusMap map, PlannerModel model) {
         this.map=map; this.model=model;
         Map<String,Integer> counts=new HashMap<>();
-        map.buildings().forEach(b->counts.merge(safeBuildingName(b.name()).toLowerCase(Locale.ROOT),1,Integer::sum));
+        map.buildings().forEach(b->counts.merge(safeBuildingName(map.originalName(b.id())).toLowerCase(Locale.ROOT),1,Integer::sum));
         map.buildings().forEach(b->{
-            String name=safeBuildingName(b.name());
-            storageKeys.put(b.id(),counts.get(name.toLowerCase(Locale.ROOT))>1?name+" ("+b.id()+")":name);
+            String name=safeBuildingName(map.originalName(b.id()));
+            storageKeys.put(b.id(), b.id().startsWith("pin:") ? "핀 ("+b.id().replace(':','_')+")" : counts.get(name.toLowerCase(Locale.ROOT))>1?name+" ("+b.id().replace(':','_')+")":name);
         });
     }
     public static String key(String id) {
@@ -25,7 +25,12 @@ public final class CourseCatalog {
     }
     public String storageKey(String id) {
         String name=storageKeys.get(id);
-        if(name==null)throw new IllegalArgumentException("Unknown building: "+id);
+        if(name==null) {
+            CampusMap.Building building=map.building(id);
+            if(building==null)throw new IllegalArgumentException("Unknown building: "+id);
+            name=id.startsWith("pin:") ? "핀 ("+id.replace(':','_')+")" : safeBuildingName(map.originalName(id))+" ("+id.replace(':','_')+")";
+            storageKeys.put(id,name);
+        }
         return name;
     }
     private static String safeBuildingName(String name) {
