@@ -3,277 +3,292 @@ package campus;
 import java.awt.*;
 import java.awt.event.*;
 import java.io.IOException;
-import java.nio.file.Path;
+import java.nio.file.*;
 import java.time.*;
 import java.time.format.DateTimeFormatter;
 import java.time.format.TextStyle;
-import java.util.List;
-import java.util.*;
+import java.util.Comparator;
+import java.util.Locale;
+import java.util.Objects;
 import javax.swing.*;
-import javax.swing.event.*;
-import campus.MapData.Building;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
+import javax.swing.filechooser.FileNameExtensionFilter;
+import campus.PlannerModel.Deadline;
 import campus.PlannerModel.Event;
 import campus.PlannerModel.Occurrence;
 
+/** Coordinates views and user actions; map data and persisted state stay separate. */
 final class PlannerFrame extends JFrame {
-    private static final DateTimeFormatter CLOCK = DateTimeFormatter.ofPattern("HH:mm");
-    private static final DateTimeFormatter DAY = DateTimeFormatter.ofPattern("M월 d일 EEEE", Locale.KOREAN);
     private final MapData data;
     private final PlannerModel model;
+    private final PlaceCatalog places;
     private final Path statePath;
     private final CampusMapPanel map;
-    private LocalDate selectedDate = LocalDate.now();
-    private Building selectedBuilding;
-    private final JLabel weekTitle = Theme.heading(" ", 19);
-    private final JLabel dayTitle = Theme.heading(" ", 18);
-    private final JLabel daySummary = Theme.label(" ", 12, Theme.MUTED);
-    private final JLabel mapTitle = Theme.heading("하루의 지도", 17);
-    private final JLabel mapSubtitle = Theme.label(" ", 12, Theme.MUTED);
-    private final JPanel searchRouteInfo = Theme.transparent(new BorderLayout(10, 5));
-    private final JLabel searchFrom = Theme.label(" ", 11, Theme.INK);
-    private final JLabel searchTo = Theme.label(" ", 11, Theme.INK);
-    private final JLabel searchRouteNote = Theme.label(" ", 10, Theme.MUTED);
-    private final JLabel mapLegend = Theme.label("● 일정 순서   ━ 도보 경로   ● 즐겨찾기", 11, Theme.MUTED);
-    private RouteDialog.Result searchedRoute;
-    private final JLabel saveStatus = Theme.label("기기에 자동 저장", 11, Theme.MUTED);
-    private final JPanel weekDays = Theme.transparent(new GridLayout(1, 7, 8, 0));
-    private final JPanel schedule = Theme.transparent(new GridBagLayout());
-    private final JTextField search = new JTextField();
-    private final JCheckBox favoritesOnly = new JCheckBox("즐겨찾기만 보기");
-    private final DefaultListModel<Building> buildingItems = new DefaultListModel<>();
-    private final JList<Building> buildings = new JList<>(buildingItems);
-    private final JLabel buildingCount = Theme.label(" ", 11, Theme.MUTED);
-    private final JLabel selectedName = Theme.heading("지도에서 건물을 선택하세요", 13);
-    private final JLabel selectedDetail = Theme.label("건물 검색과 지도 클릭을 지원합니다", 11, Theme.MUTED);
-    private final JButton favoriteButton = Theme.button("☆ 즐겨찾기", false, this::toggleFavorite);
-    private final JButton buildingEventButton = Theme.button("이곳에 일정 추가", true, () -> edit(null, false));
-    private final JTextArea dayNote = new JTextArea(3, 20);
+    private final SchedulePanel schedule;
+    private final CalendarPanel calendar;
+    private final WeeklyTimetablePanel timetable;
+    private final CourseMaterialsPanel materials;
+    private final MaterialsLibrary library;
+    private final WorkspacePanel workspace;
     private final javax.swing.Timer noteTimer;
+    private LocalDate selectedDate = PlannerTime.today();
+    private Semester selectedSemester = Semester.forDate(selectedDate);
+    private Place selectedPlace;
+    private RouteDialog.Result searchedRoute;
+    private Place routeSource, routeDestination;
     private boolean refreshing;
     private boolean unsaved;
 
-    PlannerFrame(MapData data, PlannerModel model, Path statePath) {
-        super("CNU 캠퍼스 플래너 · 전남대학교 광주캠퍼스");
+    private final JLabel weekTitle = Theme.heading(" ", 18);
+    private final JPanel weekDays = Theme.transparent(new GridLayout(1, 7, 7, 0));
+    private final JTextField search = new JTextField();
+    private final JCheckBox favoritesOnly = new JCheckBox("즐겨찾기");
+    private final DefaultListModel<Place> placeItems = new DefaultListModel<>();
+    private final JList<Place> placeList = new JList<>(placeItems);
+    private final JLabel selectedName = Theme.heading("장소 선택", 13);
+    private final JButton favorite = Theme.button("☆ 즐겨찾기", false, this::toggleFavorite);
+    private final JButton rename = Theme.button("이름 변경", false, this::renameSelected);
+    private final JButton deletePin = Theme.button("핀 삭제", false, this::deleteSelectedPin);
+    private final JButton placeEvent = Theme.button("일정 추가", false, () -> editEvent(null, null));
+    private final JLabel mapSummary = Theme.label(" ", 12, Theme.MUTED);
+    private final JPanel routeDetails = Theme.transparent(new BorderLayout(8, 4));
+    private final JLabel routeFrom = Theme.label(" ", 11, Theme.INK);
+    private final JLabel routeTo = Theme.label(" ", 11, Theme.INK);
+    private final JLabel routeNote = Theme.label(" ", 10, Theme.MUTED);
+    private final JLabel saveStatus = Theme.label(" ", 10, Theme.MUTED);
+
+    PlannerFrame(MapData data, PlannerModel model, Path statePath) throws IOException {
+        this(data, model, statePath, Path.of(System.getProperty("campus.home", ".")).toAbsolutePath());
+    }
+
+    PlannerFrame(MapData data, PlannerModel model, Path statePath, Path appRoot) throws IOException {
+        super("전남대학교 일정");
         this.data = data;
         this.model = model;
         this.statePath = statePath;
-        map = new CampusMapPanel(data, model, this::selectBuilding);
-        noteTimer = new javax.swing.Timer(600, e -> persist());
+        places = new PlaceCatalog(data, model);
+        noteTimer = new javax.swing.Timer(600, event -> persist());
         noteTimer.setRepeats(false);
+        map = new CampusMapPanel(data, model, places, this::selectPlace, this::activatePlace, this::createPin);
+        calendar = new CalendarPanel(model, this::changeDate,
+                date -> { changeDate(date); editDeadline(null); }, this::editDeadline, this::changeSemester);
+        timetable = new WeeklyTimetablePanel(model, places, this::editWeeklyEvent);
+        materials = new CourseMaterialsPanel(model, appRoot.resolve("materials"), event -> editEvent(event, null));
+        library = new MaterialsLibrary(model, materials, appRoot, this::refreshRecentFiles);
+        library.sync();
+        map.setPlaceMenu(this::placeMenu);
+        map.setScheduleOpen(occurrence -> {
+            Place place = places.find(occurrence.event().buildingId());
+            if (place != null) selectPlace(place);
+            library.openOccurrence(map, occurrence);
+        });
+        map.setTransferHandler(new TransferHandler() {
+            @Override public boolean canImport(TransferSupport support) {
+                if (!support.isDrop() || library.isWorking() || !support.isDataFlavorSupported(java.awt.datatransfer.DataFlavor.javaFileListFlavor)) return false;
+                if (map.placeAt(support.getDropLocation().getDropPoint()) == null || (support.getSourceDropActions() & COPY) == 0) return false;
+                support.setDropAction(COPY);
+                return true;
+            }
+            @Override public boolean importData(TransferSupport support) {
+                if (!canImport(support)) return false;
+                try {
+                    Object value = support.getTransferable().getTransferData(java.awt.datatransfer.DataFlavor.javaFileListFlavor);
+                    if (!(value instanceof java.util.List<?> incoming)) return false;
+                    java.util.List<Path> files = new java.util.ArrayList<>();
+                    for (Object file : incoming) {
+                        if (!(file instanceof java.io.File source)) return false;
+                        files.add(source.toPath());
+                    }
+                    library.moveIntoPlace(map, map.placeAt(support.getDropLocation().getDropPoint()), selectedSemester, files);
+                    return true;
+                } catch (Exception failure) { showError("자료 파일을 이동하지 못했습니다.", failure); return false; }
+            }
+        });
+        schedule = new SchedulePanel(model, places, new SchedulePanel.Actions() {
+            public void add(ScheduleSlot slot) { editEvent(null, slot); }
+            public void edit(Event event) { editEvent(event, null); }
+            public void delete(Event event) { deleteExcludedEvent(event); }
+            public void toggle(Occurrence occurrence) {
+                model.toggleCancellation(occurrence.event().id(), occurrence.date());
+                changed();
+            }
+            public void select(Place place) { selectPlace(place); workspace.showView(0); }
+            public void addDeadline() { editDeadline(null); }
+            public void editDeadline(Deadline task) { PlannerFrame.this.editDeadline(task); }
+            public void toggleDeadline(Deadline task) {
+                model.toggleDeadline(task.id());
+                changed();
+            }
+            public void noteChanged(String text) {
+                model.setDayNote(selectedDate, text);
+                unsaved = true;
+                noteTimer.restart();
+            }
+        });
+        workspace = new WorkspacePanel(mapCard(), calendar, timetable, materials);
         setDefaultCloseOperation(DO_NOTHING_ON_CLOSE);
         addWindowListener(new WindowAdapter() {
-            @Override public void windowClosing(WindowEvent e) {
+            @Override public void windowClosing(WindowEvent event) {
+                if (library.isWorking()) { JOptionPane.showMessageDialog(PlannerFrame.this, "파일 작업이 끝난 뒤 닫아 주세요."); return; }
                 noteTimer.stop();
                 if (unsaved && !persist()) return;
                 dispose();
             }
         });
-        JPanel page = new JPanel(new BorderLayout(0, 17));
+        JPanel page = new JPanel(new BorderLayout(0, 14));
         page.setBackground(Theme.BACKGROUND);
-        page.setBorder(BorderFactory.createEmptyBorder(22, 22, 14, 22));
+        page.setBorder(BorderFactory.createEmptyBorder(18, 18, 10, 18));
         page.add(header(), BorderLayout.NORTH);
-        JPanel body = Theme.transparent(new BorderLayout(16, 0));
-        JPanel places = places();
-        places.setPreferredSize(new Dimension(235, 0));
-        body.add(places, BorderLayout.WEST);
-
-        JPanel center = Theme.transparent(new BorderLayout(0, 15));
-        center.add(week(), BorderLayout.NORTH);
-        JPanel workspace = Theme.transparent(new BorderLayout(16, 0));
-        workspace.add(mapCard(), BorderLayout.CENTER);
-        JPanel daily = daily();
-        daily.setPreferredSize(new Dimension(335, 0));
-        workspace.add(daily, BorderLayout.EAST);
-        center.add(workspace, BorderLayout.CENTER);
+        JPanel body = Theme.transparent(new BorderLayout(14, 0));
+        JPanel placePanel = placesPanel();
+        placePanel.setPreferredSize(new Dimension(250, 0));
+        body.add(placePanel, BorderLayout.WEST);
+        JPanel center = Theme.transparent(new BorderLayout(0, 13));
+        center.add(weekPanel(), BorderLayout.NORTH);
+        JPanel main = Theme.transparent(new BorderLayout(14, 0));
+        main.add(workspace, BorderLayout.CENTER);
+        schedule.setPreferredSize(new Dimension(365, 0));
+        main.add(schedule, BorderLayout.EAST);
+        center.add(main, BorderLayout.CENTER);
         body.add(center, BorderLayout.CENTER);
         page.add(body, BorderLayout.CENTER);
         JPanel footer = Theme.transparent(new BorderLayout());
-        footer.add(Theme.label("전남대학교 광주캠퍼스  ·  OSM 지도  ·  보행 속도 1.3 m/s 기준", 11, Theme.MUTED), BorderLayout.WEST);
+        footer.add(Theme.label("© OpenStreetMap contributors", 10, Theme.MUTED), BorderLayout.WEST);
         footer.add(saveStatus, BorderLayout.EAST);
         page.add(footer, BorderLayout.SOUTH);
         setContentPane(page);
-        setSize(1420, 900);
-        setMinimumSize(new Dimension(1130, 680));
+        setMinimumSize(new Dimension(1110, 680));
         Dimension screen = Toolkit.getDefaultToolkit().getScreenSize();
-        setSize(Math.min(getWidth(), screen.width-60), Math.min(getHeight(), screen.height-70));
+        setSize(Math.min(1450, screen.width - 40), Math.min(930, screen.height - 65));
         setLocationRelativeTo(null);
         refresh();
     }
 
     private JPanel header() {
-        JPanel header = Theme.transparent(new BorderLayout(20, 0));
-        JPanel brand = Theme.transparent(new FlowLayout(FlowLayout.LEFT, 0, 0));
-        JLabel logo = Theme.heading("CNU", 25);
-        logo.setForeground(Theme.BLUE);
-        brand.add(logo);
-        brand.add(Box.createHorizontalStrut(15));
-        JPanel text = Theme.transparent(new GridLayout(2,1,0,4));
-        text.add(Theme.heading("나의 캠퍼스, 나의 한 주", 21));
-        text.add(Theme.label("수업부터 약속까지 · 하루의 일정을 지도에서 이어보세요", 12, Theme.MUTED));
-        brand.add(text);
-        header.add(brand, BorderLayout.WEST);
-        JPanel actions = Theme.transparent(new FlowLayout(FlowLayout.RIGHT, 9, 6));
-        actions.add(Theme.button("최단거리 찾기", false, this::findRoute));
-        actions.add(Theme.button("고정 시간표 추가", false, () -> edit(null, true)));
-        actions.add(Theme.button("+ 일일 일정 추가", true, () -> edit(null, false)));
-        header.add(actions, BorderLayout.EAST);
-        return header;
+        JPanel panel = Theme.transparent(new BorderLayout());
+        panel.add(Theme.heading("전남대학교", 22), BorderLayout.WEST);
+        JPanel actions = Theme.transparent(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+        actions.add(Theme.button("가져오기", false, this::importData));
+        actions.add(Theme.button("공유하기", false, this::exportData));
+        panel.add(actions, BorderLayout.EAST);
+        return panel;
     }
 
-    private JPanel week() {
-        JPanel panel = Theme.card(new BorderLayout(0, 13));
-        JPanel navigation = Theme.transparent(new BorderLayout());
-        JPanel previous = Theme.transparent(new FlowLayout(FlowLayout.LEFT, 8, 0));
-        previous.add(Theme.button("‹", false, () -> changeDate(selectedDate.minusWeeks(1))));
-        previous.add(weekTitle);
-        previous.add(Theme.button("›", false, () -> changeDate(selectedDate.plusWeeks(1))));
-        navigation.add(previous, BorderLayout.WEST);
-        navigation.add(Theme.button("오늘", false, () -> changeDate(LocalDate.now())), BorderLayout.EAST);
-        panel.add(navigation, BorderLayout.NORTH);
-        weekDays.setPreferredSize(new Dimension(0, 70));
+    private JPanel weekPanel() {
+        JPanel panel = Theme.card(new BorderLayout(0, 10));
+        JPanel top = Theme.transparent(new BorderLayout());
+        JPanel navigation = Theme.transparent(new FlowLayout(FlowLayout.LEFT, 7, 0));
+        navigation.add(Theme.button("‹", false, () -> changeDate(selectedDate.minusWeeks(1))));
+        navigation.add(weekTitle);
+        navigation.add(Theme.button("›", false, () -> changeDate(selectedDate.plusWeeks(1))));
+        top.add(navigation, BorderLayout.WEST);
+        top.add(Theme.button("오늘", false, () -> changeDate(PlannerTime.today())), BorderLayout.EAST);
+        panel.add(top, BorderLayout.NORTH);
+        weekDays.setPreferredSize(new Dimension(0, 58));
         panel.add(weekDays, BorderLayout.CENTER);
         return panel;
     }
 
-    private JPanel places() {
-        JPanel panel = Theme.card(new BorderLayout(0, 12));
-        JPanel top = Theme.transparent(new GridBagLayout());
-        GridBagConstraints c = new GridBagConstraints();
-        c.gridx = 0;
-        c.weightx = 1;
-        c.fill = GridBagConstraints.HORIZONTAL;
-        c.gridy = 0;
-        c.insets = new Insets(0,0,12,0);
-        top.add(Theme.heading("캠퍼스 장소", 17),c);
+    private JPanel placesPanel() {
+        JPanel panel = Theme.card(new BorderLayout(0, 10));
+        JPanel heading = Theme.transparent(new GridLayout(0, 1, 0, 8));
+        heading.add(Theme.heading("장소", 17));
         Theme.field(search);
-        search.setToolTipText("건물명 검색");
-        search.putClientProperty("JTextField.placeholderText", "건물명 검색");
-        c.gridy++;
-        c.insets = new Insets(0,0,7,0);
-        top.add(Theme.label("OSM 건물명 검색",11,Theme.MUTED),c);
-        c.gridy++;
-        top.add(search,c);
-        favoritesOnly.setFont(Theme.font(12,Font.PLAIN));
-        favoritesOnly.setForeground(Theme.INK);
+        search.setToolTipText("장소 검색");
+        search.getAccessibleContext().setAccessibleName("장소 검색");
+        heading.add(search);
         favoritesOnly.setOpaque(false);
-        c.gridy++;
-        top.add(favoritesOnly,c);
-        c.gridy++;
-        c.insets = new Insets(0,0,0,0);
-        top.add(buildingCount,c);
-        panel.add(top,BorderLayout.NORTH);
-        buildings.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
-        buildings.setBackground(Color.WHITE);
-        buildings.setFixedCellHeight(44);
-        buildings.setCellRenderer(new DefaultListCellRenderer() {
-            @Override public Component getListCellRendererComponent(JList<?> list,Object value,int index,boolean selected,boolean focus) {
-                JLabel label = (JLabel)super.getListCellRendererComponent(list,value,index,selected,focus);
-                Building b = (Building)value;
-                label.setText((model.isFavorite(b.id()) ? "★  " : "    ") + b.name());
-                label.setFont(Theme.font(12,Font.PLAIN));
-                label.setBorder(BorderFactory.createEmptyBorder(0,6,0,4));
+        favoritesOnly.setFont(Theme.font(12, Font.PLAIN));
+        heading.add(favoritesOnly);
+        panel.add(heading, BorderLayout.NORTH);
+        placeList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        placeList.setBackground(Color.WHITE);
+        placeList.setFixedCellHeight(44);
+        placeList.setCellRenderer(new DefaultListCellRenderer() {
+            @Override public Component getListCellRendererComponent(JList<?> list, Object value,
+                    int index, boolean selected, boolean focus) {
+                JLabel label = (JLabel) super.getListCellRendererComponent(list, value, index, selected, focus);
+                Place place = (Place) value;
+                label.setText((model.isFavorite(place.id()) ? "★ " : "") + place.name());
+                label.setToolTipText(place.name() + (place.pin() ? " · 핀" : ""));
+                label.setFont(Theme.font(12, Font.PLAIN));
+                label.setBorder(BorderFactory.createEmptyBorder(0, 6, 0, 4));
                 label.setBackground(selected ? Theme.PALE_BLUE : Color.WHITE);
                 label.setForeground(selected ? Theme.BLUE : Theme.INK);
-                label.setToolTipText(b.name());
                 return label;
             }
         });
-        buildings.addListSelectionListener(e -> {
-            if (!e.getValueIsAdjusting() && !refreshing && buildings.getSelectedValue()!=null) selectBuilding(buildings.getSelectedValue());
+        placeList.addListSelectionListener(event -> {
+            if (!refreshing && !event.getValueIsAdjusting() && placeList.getSelectedValue() != null) {
+                selectPlace(placeList.getSelectedValue());
+            }
         });
-        panel.add(Theme.scroll(buildings),BorderLayout.CENTER);
-        JPanel bottom = Theme.transparent(new GridBagLayout());
-        c.gridy = 0;
-        c.insets = new Insets(8,0,7,0);
-        bottom.add(selectedName,c);
-        c.gridy++;
-        bottom.add(selectedDetail,c);
-        c.gridy++;
-        bottom.add(favoriteButton,c);
-        c.gridy++;
-        bottom.add(buildingEventButton,c);
-        panel.add(bottom,BorderLayout.SOUTH);
-        favoritesOnly.addActionListener(e -> refreshBuildings());
+        placeList.addMouseListener(new MouseAdapter() {
+            @Override public void mouseClicked(MouseEvent event) {
+                int index = placeList.locationToIndex(event.getPoint());
+                if (event.getClickCount() == 2 && index >= 0
+                        && placeList.getCellBounds(index, index).contains(event.getPoint())) {
+                    activatePlace(placeItems.get(index));
+                }
+            }
+        });
+        panel.add(Theme.scroll(placeList), BorderLayout.CENTER);
+        JPanel bottom = Theme.transparent(new GridLayout(0, 1, 0, 8));
+        bottom.add(selectedName);
+        bottom.add(favorite);
+        bottom.add(rename);
+        bottom.add(deletePin);
+        bottom.add(placeEvent);
+        panel.add(bottom, BorderLayout.SOUTH);
+        favoritesOnly.addActionListener(event -> refreshPlaces());
         search.getDocument().addDocumentListener(new DocumentListener() {
-            public void insertUpdate(DocumentEvent e) { refreshBuildings(); }
-            public void removeUpdate(DocumentEvent e) { refreshBuildings(); }
-            public void changedUpdate(DocumentEvent e) { refreshBuildings(); }
+            public void insertUpdate(DocumentEvent event) { refreshPlaces(); }
+            public void removeUpdate(DocumentEvent event) { refreshPlaces(); }
+            public void changedUpdate(DocumentEvent event) { refreshPlaces(); }
         });
         return panel;
     }
 
     private JPanel mapCard() {
         JPanel panel = Theme.card(new BorderLayout(0, 10));
-        JPanel top = Theme.transparent(new BorderLayout());
-        JPanel titles = Theme.transparent(new GridLayout(2,1,0,5));
-        titles.add(mapTitle);
-        titles.add(mapSubtitle);
-        top.add(titles,BorderLayout.WEST);
-        JPanel controls = Theme.transparent(new FlowLayout(FlowLayout.RIGHT,5,0));
-        controls.add(Theme.button("-",false,() -> map.zoom(1/1.3)));
-        controls.add(Theme.button("+",false,() -> map.zoom(1.3)));
-        controls.add(Theme.button("맞춤",false,map::fit));
-        top.add(controls,BorderLayout.EAST);
-        JPanel mapHeader = Theme.transparent(new BorderLayout(0, 11));
-        mapHeader.add(top, BorderLayout.NORTH);
-        JPanel endpoints = Theme.transparent(new GridLayout(2, 1, 0, 4));
-        endpoints.add(searchFrom);
-        endpoints.add(searchTo);
-        searchRouteInfo.add(endpoints, BorderLayout.CENTER);
-        searchRouteInfo.add(Theme.button("일정 지도로", false, this::showScheduleMap), BorderLayout.EAST);
-        searchRouteInfo.add(searchRouteNote, BorderLayout.SOUTH);
-        searchRouteInfo.setVisible(false);
-        mapHeader.add(searchRouteInfo, BorderLayout.CENTER);
-        panel.add(mapHeader,BorderLayout.NORTH);
-        panel.add(map,BorderLayout.CENTER);
-        JPanel legend = Theme.transparent(new BorderLayout());
-        legend.add(mapLegend,BorderLayout.WEST);
-        legend.add(Theme.label("휠 확대 · 드래그 이동",11,Theme.MUTED),BorderLayout.EAST);
-        panel.add(legend,BorderLayout.SOUTH);
-        return panel;
-    }
-
-    private JPanel daily() {
-        JPanel panel = Theme.transparent(new BorderLayout(0,14));
-        JPanel eventsCard = Theme.card(new BorderLayout(0,12));
-        JPanel title = Theme.transparent(new GridLayout(2,1,0,5));
-        title.add(dayTitle);
-        title.add(daySummary);
-        eventsCard.add(title,BorderLayout.NORTH);
-        eventsCard.add(Theme.scroll(schedule),BorderLayout.CENTER);
-        panel.add(eventsCard,BorderLayout.CENTER);
-        JPanel memo = Theme.card(new BorderLayout(0,10));
-        JPanel memoTitle = Theme.transparent(new BorderLayout());
-        memoTitle.add(Theme.heading("오늘의 메모",14),BorderLayout.WEST);
-        memoTitle.add(Theme.label("자동 저장",10,Theme.MUTED),BorderLayout.EAST);
-        memo.add(memoTitle,BorderLayout.NORTH);
-        dayNote.setLineWrap(true);
-        dayNote.setWrapStyleWord(true);
-        Theme.field(dayNote);
-        dayNote.setToolTipText("선택한 날짜의 준비물이나 할 일을 적어보세요");
-        JScrollPane memoScroll = Theme.scroll(dayNote);
-        memoScroll.setPreferredSize(new Dimension(0,86));
-        memo.add(memoScroll,BorderLayout.CENTER);
-        dayNote.getDocument().addDocumentListener(new DocumentListener() {
-            private void changed() {
-                if (refreshing) return;
-                model.setDayNote(selectedDate,dayNote.getText());
-                unsaved = true;
-                saveStatus.setText("메모 저장 중…");
-                noteTimer.restart();
-            }
-            public void insertUpdate(DocumentEvent e) { changed(); }
-            public void removeUpdate(DocumentEvent e) { changed(); }
-            public void changedUpdate(DocumentEvent e) { changed(); }
-        });
-        panel.add(memo,BorderLayout.SOUTH);
+        JPanel heading = Theme.transparent(new BorderLayout(0, 8));
+        JPanel title = Theme.transparent(new BorderLayout());
+        title.add(Theme.heading("지도", 17), BorderLayout.WEST);
+        JPanel controls = Theme.transparent(new FlowLayout(FlowLayout.RIGHT, 5, 0));
+        controls.add(Theme.button("최단거리 찾기", false, this::findRoute));
+        controls.add(Theme.button("파일 검색", false, () -> library.search(map)));
+        controls.add(Theme.button("-", false, () -> map.zoom(1 / 1.3)));
+        controls.add(Theme.button("+", false, () -> map.zoom(1.3)));
+        title.add(controls, BorderLayout.EAST);
+        heading.add(title, BorderLayout.NORTH);
+        heading.add(mapSummary, BorderLayout.CENTER);
+        JPanel names = Theme.transparent(new GridLayout(2, 1, 0, 4));
+        names.add(routeFrom);
+        names.add(routeTo);
+        routeDetails.add(names, BorderLayout.CENTER);
+        routeDetails.add(Theme.button("일정 경로", false, this::showScheduleRoute), BorderLayout.EAST);
+        routeDetails.add(routeNote, BorderLayout.SOUTH);
+        routeDetails.setVisible(false);
+        heading.add(routeDetails, BorderLayout.SOUTH);
+        panel.add(heading, BorderLayout.NORTH);
+        panel.add(map, BorderLayout.CENTER);
         return panel;
     }
 
     private void changeDate(LocalDate date) {
-        noteTimer.stop();
-        if (unsaved && !persist()) return;
+        if (!flushNotes()) return;
         selectedDate = date;
+        selectedSemester = Semester.forDate(date);
+        searchedRoute = null;
+        map.clearSearchRoute();
+        refresh();
+    }
+
+    private void changeSemester(Semester semester) {
+        if (!flushNotes()) return;
+        selectedSemester = semester;
+        selectedDate = semester.start();
         searchedRoute = null;
         map.clearSearchRoute();
         refresh();
@@ -283,26 +298,39 @@ final class PlannerFrame extends JFrame {
         refreshing = true;
         try {
             LocalDate monday = selectedDate.with(DayOfWeek.MONDAY);
-            weekTitle.setText(monday.getYear()+"년 "+monday.getMonthValue()+"월 "+monday.getDayOfMonth()+"일 — "+monday.plusDays(6).getMonthValue()+"월 "+monday.plusDays(6).getDayOfMonth()+"일");
+            weekTitle.setText(selectedSemester + " · " + monday.getMonthValue() + "월 "
+                    + monday.getDayOfMonth() + "일 – " + monday.plusDays(6).getMonthValue() + "월 "
+                    + monday.plusDays(6).getDayOfMonth() + "일");
             weekDays.removeAll();
-            for (int i = 0; i < 7; i++) {
-                LocalDate date = monday.plusDays(i);
-                List<Occurrence> daily = model.occurrences(date);
-                long count = daily.stream().filter(o -> !o.canceled()).count();
-                String day = date.getDayOfWeek().getDisplayName(TextStyle.SHORT,Locale.KOREAN);
-                boolean chosen = date.equals(selectedDate);
-                JButton button = Theme.button("<html><center>"+day+"  "+date.getDayOfMonth()+"<br><font size='2'>"+(count==0 ? "일정 없음" : count+"개 일정")+"</font></center></html>",chosen,() -> changeDate(date));
-                if (date.equals(LocalDate.now())) button.setToolTipText("오늘");
+            for (int index = 0; index < 7; index++) {
+                LocalDate date = monday.plusDays(index);
+                String day = date.getDayOfWeek().getDisplayName(TextStyle.SHORT, Locale.KOREAN);
+                long count = model.occurrences(date).stream().filter(value -> !value.canceled()).count() + model.deadlines(date).size();
+                JButton button = Theme.button("<html><center>" + day + " " + date.getDayOfMonth() + "<br>" + (count == 0 ? "일정 없음" : count + "개") + "</center></html>", date.equals(selectedDate),
+                        () -> changeDate(date));
+                if (date.getDayOfWeek() == DayOfWeek.SATURDAY || date.getDayOfWeek() == DayOfWeek.SUNDAY) {
+                    button.putClientProperty("calendar.fill", date.getDayOfWeek() == DayOfWeek.SATURDAY ? Theme.SATURDAY : Theme.SUNDAY);
+                    button.setForeground(Theme.INK);
+                }
+                button.putClientProperty("calendar.selected", date.equals(selectedDate));
+                button.putClientProperty("calendar.today", date.equals(PlannerTime.today()));
+                if (!date.equals(selectedDate)) {
+                    if (date.getDayOfWeek() == DayOfWeek.SATURDAY) button.setForeground(Theme.BLUE);
+                    if (date.getDayOfWeek() == DayOfWeek.SUNDAY) button.setForeground(new Color(196, 54, 54));
+                }
+                if (date.equals(PlannerTime.today())) button.setToolTipText("오늘");
                 weekDays.add(button);
             }
-            List<Occurrence> occurrences = model.occurrences(selectedDate);
-            map.setOccurrences(occurrences);
-            refreshSchedule(occurrences);
-            refreshBuildings();
-            dayTitle.setText(selectedDate.format(DAY));
-            dayNote.setText(model.dayNote(selectedDate));
-            dayNote.setCaretPosition(0);
-            updateSelectedBuilding();
+            map.setOccurrences(model.occurrences(selectedDate));
+            schedule.refresh(selectedDate, map.legs());
+            calendar.refresh(selectedDate, selectedSemester);
+            timetable.refresh(selectedSemester);
+            materials.refresh(selectedSemester);
+            refreshPlaces();
+            if (selectedPlace != null) selectedPlace = places.find(selectedPlace.id());
+            updateSelection();
+            updateMapSummary();
+            refreshRecentFiles();
         } finally {
             refreshing = false;
         }
@@ -310,111 +338,211 @@ final class PlannerFrame extends JFrame {
         repaint();
     }
 
-    private void refreshSchedule(List<Occurrence> occurrences) {
-        schedule.removeAll();
-        long count = occurrences.stream().filter(o -> !o.canceled()).count();
-        long canceled = occurrences.size()-count;
-        daySummary.setText("진행 "+count+"개"+(canceled==0 ? "" : " · 휴강/제외 "+canceled+"개"));
-        updateMapSummary();
-        GridBagConstraints c = new GridBagConstraints();
-        c.gridx=0;
-        c.gridy=0;
-        c.weightx=1;
-        c.fill=GridBagConstraints.HORIZONTAL;
-        c.anchor=GridBagConstraints.NORTH;
-        c.insets=new Insets(0,0,10,0);
-        if (occurrences.isEmpty()) {
-            JPanel empty = Theme.transparent(new GridLayout(0,1,0,12));
-            empty.setBorder(BorderFactory.createEmptyBorder(35,4,25,4));
-            empty.add(Theme.heading("오늘의 일정을 채워보세요",15));
-            empty.add(Theme.label("고정 수업은 매주 자동으로 표시됩니다.",12,Theme.MUTED));
-            empty.add(Theme.label("동아리와 약속은 하루 일정으로 추가하세요.",11,Theme.MUTED));
-            empty.add(Theme.button("+ 이 날짜에 일정 추가",true,() -> edit(null,false)));
-            schedule.add(empty,c);
-            c.gridy++;
-        }
-        int routeIndex=0;
-        int activeIndex=0;
-        List<Occurrence> activeOccurrences = occurrences.stream().filter(o -> !o.canceled()).toList();
-        LocalTime occupiedUntil = null;
-        if (!activeOccurrences.isEmpty()) {
-            addSlotButton(ScheduleSlot.before(activeOccurrences.get(0).event().start()), c);
-        } else if (!occurrences.isEmpty()) {
-            addSlotButton(new ScheduleSlot(LocalTime.of(9, 0), LocalTime.of(10, 0)), c);
-        }
-        for (Occurrence occurrence : occurrences) {
-            if (!occurrence.canceled() && activeIndex>0) {
-                addSlotButton(ScheduleSlot.between(occupiedUntil, occurrence.event().start()), c);
-                schedule.add(legCard(map.legs().get(routeIndex++)),c);
-                c.gridy++;
-            }
-            schedule.add(eventCard(occurrence,occurrence.canceled() ? 0 : ++activeIndex),c);
-            c.gridy++;
-            if (!occurrence.canceled() && (occupiedUntil == null || occurrence.event().end().isAfter(occupiedUntil))) {
-                occupiedUntil = occurrence.event().end();
-            }
-        }
-        if (occupiedUntil != null) addSlotButton(ScheduleSlot.after(occupiedUntil), c);
-        c.weighty=1;
-        c.fill=GridBagConstraints.BOTH;
-        schedule.add(Theme.transparent(new BorderLayout()),c);
+    private void refreshPlaces() {
+        boolean previous = refreshing;
+        refreshing = true;
+        String filter = search.getText().strip().toLowerCase(Locale.ROOT);
+        placeItems.clear();
+        places.namedPlaces().stream()
+                .filter(place -> place.name().toLowerCase(Locale.ROOT).contains(filter))
+                .filter(place -> !favoritesOnly.isSelected() || model.isFavorite(place.id()))
+                .sorted(Comparator.comparing((Place place) -> !model.isFavorite(place.id()))
+                        .thenComparing(Place::name))
+                .forEach(placeItems::addElement);
+        if (selectedPlace != null) placeList.setSelectedValue(places.find(selectedPlace.id()), true);
+        refreshing = previous;
     }
 
-    private void addSlotButton(ScheduleSlot slot, GridBagConstraints constraints) {
-        if (slot == null) return;
-        String text = "+  " + slot.start().format(CLOCK) + " – " + slot.end().format(CLOCK) + " 일정 추가";
-        JButton button = Theme.button(text, false, () -> edit(null, false, slot));
-        button.setForeground(Theme.BLUE);
-        button.setBorder(BorderFactory.createEmptyBorder(7, 8, 7, 8));
-        button.setToolTipText("선택한 날짜의 새 일정에 이 시간대를 미리 채웁니다");
-        schedule.add(button, constraints);
-        constraints.gridy++;
+    private void selectPlace(Place place) {
+        selectedPlace = places.find(place.id());
+        map.select(place.id());
+        updateSelection();
+        if (!Objects.equals(placeList.getSelectedValue(), selectedPlace)) {
+            boolean previous = refreshing;
+            refreshing = true;
+            placeList.setSelectedValue(selectedPlace, true);
+            refreshing = previous;
+        }
     }
 
-    private void updateMapSummary() {
-        boolean searching = searchedRoute != null;
-        searchRouteInfo.setVisible(searching);
-        mapTitle.setText(searching ? "최단거리 검색" : "하루의 지도");
-        mapLegend.setText(searching ? "출발 → 도착   ━ 최단 도보 경로" : "● 일정 순서   ━ 도보 경로   ● 즐겨찾기");
-        mapSubtitle.setForeground(Theme.MUTED);
-        if (searching) {
-            MapData.Route route = searchedRoute.route();
-            searchFrom.setText("출발  " + searchedRoute.from().name());
-            searchTo.setText("도착  " + searchedRoute.to().name());
-            searchFrom.setToolTipText(searchedRoute.from().name());
-            searchTo.setToolTipText(searchedRoute.to().name());
-            searchRouteNote.setText(route.message());
-            searchRouteNote.setToolTipText(route.message());
-            if (route.reachable()) {
-                int minutes = (int) Math.ceil(route.meters() / (CampusMapPanel.WALKING_METERS_PER_SECOND * 60));
-                mapSubtitle.setText(String.format(Locale.ROOT, "최단거리 %,.0f m · 도보 약 %d분", route.meters(), minutes));
-            } else {
-                mapSubtitle.setText("연결된 보행 경로를 찾지 못했습니다");
-                mapSubtitle.setForeground(Theme.WARNING);
-            }
+    private void updateSelection() {
+        boolean selected = selectedPlace != null;
+        selectedName.setText(selected ? selectedPlace.toString() : "장소 선택");
+        selectedName.setToolTipText(selected ? selectedPlace.toString() : null);
+        favorite.setEnabled(selected);
+        rename.setEnabled(selected);
+        placeEvent.setEnabled(selected);
+        deletePin.setVisible(selected && selectedPlace.pin());
+        favorite.setText(selected && model.isFavorite(selectedPlace.id()) ? "★ 즐겨찾기 해제" : "☆ 즐겨찾기");
+    }
+
+    private void activatePlace(Place place) {
+        selectPlace(place);
+        if (!place.named() && !renameSelected()) return;
+        library.openPlace(map, selectedPlace, selectedSemester);
+    }
+
+    private void refreshRecentFiles() {
+        java.util.Map<String, Path> recent = library.recentPlaces(places.namedPlaces(), selectedSemester);
+        map.setRecentFiles(recent, place -> library.openLatest(map, place, selectedSemester));
+    }
+
+    private JPopupMenu placeMenu(Place place) {
+        selectPlace(place);
+        JPopupMenu menu = new JPopupMenu();
+        addMenu(menu, "자료함 열기", () -> activatePlace(place));
+        addMenu(menu, "일정 추가", () -> editEvent(null, null));
+        addMenu(menu, "여기서 출발", () -> { routeSource = place; searchSelectedRoute(); });
+        addMenu(menu, "여기로 도착", () -> { routeDestination = place; searchSelectedRoute(); });
+        return menu;
+    }
+    private void addMenu(JPopupMenu menu, String label, Runnable action) {
+        JMenuItem item = new JMenuItem(label);
+        item.addActionListener(event -> action.run());
+        menu.add(item);
+    }
+    private void searchSelectedRoute() {
+        if (routeSource == null || routeDestination == null) {
+            mapSummary.setText(routeSource == null ? "우클릭하여 출발 장소 선택" : "우클릭하여 도착 장소 선택");
             return;
         }
-        long count = model.occurrences(selectedDate).stream().filter(o -> !o.canceled()).count();
-        double meters = map.legs().stream().filter(l -> l.route().reachable()).mapToDouble(l -> l.route().meters()).sum();
-        long unavailable = map.legs().stream().filter(l -> !l.route().reachable()).count();
-        int minutes = map.legs().stream().filter(l -> l.route().reachable()).mapToInt(CampusMapPanel.Leg::minutes).sum();
-        mapSubtitle.setText(count == 0 ? "날짜를 고르고 일정을 추가해 보세요" :
-                count + "개 일정 · " + String.format(Locale.ROOT, "%,.0f m", meters) + " · 약 " + minutes + "분"
-                        + (unavailable > 0 ? " · 일부 경로 없음" : ""));
+        searchedRoute = new RouteDialog.Result(routeSource, routeDestination, places.route(routeSource, routeDestination));
+        map.setSearchRoute(routeSource, routeDestination, searchedRoute.route());
+        updateMapSummary();
+    }
+
+    @Override public void dispose() {
+        if (library != null) library.close();
+        super.dispose();
+    }
+
+    private boolean renameSelected() {
+        if (selectedPlace == null || !flushNotes()) return false;
+        String entered = (String) JOptionPane.showInputDialog(this, "장소 이름", "이름 지정",
+                JOptionPane.PLAIN_MESSAGE, null, null, selectedPlace.name());
+        if (entered == null) return false;
+        if (entered.isBlank()) {
+            JOptionPane.showMessageDialog(this, "이름을 입력해 주세요.");
+            return false;
+        }
+        places.rename(selectedPlace, entered.strip());
+        String id = selectedPlace.id();
+        changed();
+        selectPlace(places.find(id));
+        return true;
+    }
+
+    private void createPin(MapData.GeoPoint point) {
+        if (!flushNotes()) return;
+        String name = JOptionPane.showInputDialog(this, "핀 이름", "핀 추가", JOptionPane.PLAIN_MESSAGE);
+        if (name == null) return;
+        if (name.isBlank()) {
+            JOptionPane.showMessageDialog(this, "이름을 입력해 주세요.");
+            return;
+        }
+        Place pin = places.addPin(point, name.strip());
+        changed();
+        selectPlace(pin);
+    }
+
+    private void toggleFavorite() {
+        if (selectedPlace == null) return;
+        model.toggleFavorite(selectedPlace.id());
+        changed();
+    }
+
+    private void deleteSelectedPin() {
+        if (selectedPlace == null || !selectedPlace.pin() || !flushNotes()) return;
+        String id = selectedPlace.id();
+        long references = model.events().stream().filter(event -> event.buildingId().equals(id)).count();
+        String message = selectedPlace.name() + " 핀을 삭제할까요?";
+        if (references > 0) message += "\n이 핀을 사용하는 일정 " + references + "개도 함께 삭제됩니다.";
+        if (JOptionPane.showConfirmDialog(this, message, "핀 삭제", JOptionPane.YES_NO_OPTION)
+                != JOptionPane.YES_OPTION) return;
+        model.removePin(id);
+        selectedPlace = null;
+        searchedRoute = null;
+        map.clearSearchRoute();
+        map.select(null);
+        changed();
+    }
+
+    private void editEvent(Event event, ScheduleSlot slot) {
+        if (!flushNotes()) return;
+        LocalDate baseDate = event == null ? PlannerTime.forNewItem(selectedDate) : selectedDate;
+        Semester semester = event != null && model.semesterOf(event.id()) != null
+                ? model.semesterOf(event.id()) : Semester.forDate(baseDate);
+        EventDialog.Result result = EventDialog.open(this, places, model, baseDate, selectedPlace, event, slot, semester);
+        applyEventResult(result, event, baseDate, semester);
+    }
+
+    private void applyEventResult(EventDialog.Result result, Event original, LocalDate baseDate, Semester semester) {
+        if (result == null) return;
+        WeeklyScheduleService weekly = new WeeklyScheduleService(model, semester);
+        if (result.deleted()) {
+            if (result.event().recurring()) weekly.delete(result.event());
+            else model.removeEvent(result.event().id());
+        }
+        else {
+            Event saved = result.event();
+            if (saved.recurring()) weekly.apply(original, result.events());
+            else {
+                if (original != null && original.recurring()) weekly.delete(original);
+                model.putEvent(saved, Semester.forDate(saved.date()));
+            }
+            if (original == null) {
+                selectedDate = saved.recurring() ? baseDate : saved.date();
+                selectedSemester = Semester.forDate(selectedDate);
+            }
+        }
+        changed();
+    }
+
+    private void editWeeklyEvent(Event original, DayOfWeek day, LocalTime time) {
+        if (!flushNotes()) return;
+        LocalDate base = original == null ? PlannerTime.forNewItem(selectedDate) : selectedDate;
+        Semester semester = original != null && model.semesterOf(original.id()) != null
+                ? model.semesterOf(original.id()) : Semester.forDate(base);
+        EventDialog.Result result = EventDialog.openRecurring(this, places, model, base, selectedPlace, original,
+                ScheduleSlot.after(time), semester, day);
+        applyEventResult(result, original, base, semester);
+    }
+
+    private void deleteExcludedEvent(Event event) {
+        if (event.recurring() || !flushNotes()) return;
+        boolean excluded = model.occurrences(event.date()).stream()
+                .anyMatch(value -> value.event().id().equals(event.id()) && value.canceled());
+        if (!excluded) return;
+        if (JOptionPane.showConfirmDialog(this, event.title() + " 일정을 삭제할까요?",
+                "일정 삭제", JOptionPane.YES_NO_OPTION) != JOptionPane.YES_OPTION) return;
+        model.removeEvent(event.id());
+        changed();
+    }
+
+    private void editDeadline(Deadline task) {
+        if (!flushNotes()) return;
+        DeadlineDialog.Result result = DeadlineDialog.open(this, selectedDate, task);
+        if (result == null) return;
+        if (result.deleted()) model.removeDeadline(result.deadline().id());
+        else {
+            model.putDeadline(result.deadline());
+            selectedDate = result.deadline().date();
+            selectedSemester = Semester.forDate(selectedDate);
+        }
+        changed();
     }
 
     private void findRoute() {
-        RouteDialog.Result result = RouteDialog.open(this, data, model, selectedBuilding);
+        RouteDialog.Result result = RouteDialog.open(this, places, model, selectedPlace);
         if (result == null) return;
         searchedRoute = result;
         map.setSearchRoute(result.from(), result.to(), result.route());
-        map.fit();
         updateMapSummary();
         revalidate();
         repaint();
     }
 
-    private void showScheduleMap() {
+    private void showScheduleRoute() {
         searchedRoute = null;
         map.clearSearchRoute();
         updateMapSummary();
@@ -422,182 +550,106 @@ final class PlannerFrame extends JFrame {
         repaint();
     }
 
-    private JPanel eventCard(Occurrence occurrence,int index) {
-        Event event=occurrence.event();
-        boolean canceled=occurrence.canceled();
-        JPanel card=Theme.card(new BorderLayout(0,9));
-        card.setBackground(canceled ? new Color(247,248,250) : Color.WHITE);
-        card.setBorder(BorderFactory.createEmptyBorder(12,12,12,12));
-        JPanel details=Theme.transparent(new GridBagLayout());
-        GridBagConstraints c=new GridBagConstraints();
-        c.gridx=0;
-        c.weightx=1;
-        c.fill=GridBagConstraints.HORIZONTAL;
-        c.insets=new Insets(0,0,5,0);
-        c.gridy=0;
-        JLabel time=Theme.heading((canceled ? "" : index+"  ")+event.start().format(CLOCK)+" – "+event.end().format(CLOCK),13);
-        time.setForeground(canceled ? Theme.MUTED : Theme.BLUE);
-        details.add(time,c);
-        c.gridy++;
-        JLabel title=Theme.heading(event.title(),15);
-        title.setToolTipText(event.title());
-        if(canceled) title.setForeground(Theme.MUTED);
-        details.add(title,c);
-        c.gridy++;
-        Building place=data.building(event.buildingId());
-        JLabel location=Theme.label(place==null ? "OSM에서 장소를 찾을 수 없습니다" : place.name(),12,Theme.MUTED);
-        location.setToolTipText(location.getText());
-        location.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        location.addMouseListener(new MouseAdapter(){
-            @Override public void mouseClicked(MouseEvent e){if(place!=null)selectBuilding(place);}
-        });
-        details.add(location,c);
-        c.gridy++;
-        String state=canceled ? "휴강/제외 · 이 날짜에만 적용" : event.category()+" · "+(event.recurring() ? "매주 반복" : "하루 일정");
-        details.add(Theme.label(state,11,canceled ? Theme.WARNING : Theme.MUTED),c);
-        if(!canceled && model.occurrences(occurrence.date()).stream().anyMatch(other ->
-                !other.canceled() && !other.event().id().equals(event.id())
-                        && other.event().start().isBefore(event.end())
-                        && event.start().isBefore(other.event().end()))) {
-            c.gridy++;
-            details.add(Theme.label("다른 일정과 시간이 겹칩니다",11,Theme.WARNING),c);
-        }
-        if(!event.note().isBlank()) {
-            c.gridy++;
-            String memo=event.note().length()>130 ? event.note().substring(0,130)+"…" : event.note();
-            JLabel note=Theme.label("<html><div style='width:225px'>"+Theme.html(memo).replace("\n","<br>")+"</div></html>",11,Theme.MUTED);
-            note.setToolTipText(event.note());
-            details.add(note,c);
-        }
-        card.add(details,BorderLayout.CENTER);
-        JPanel actions=Theme.transparent(new FlowLayout(FlowLayout.RIGHT,6,0));
-        actions.add(Theme.button("편집",false,() -> edit(event,event.recurring())));
-        String cancelLabel=canceled ? "복원" : event.category()==PlannerModel.Category.CLASS ? "휴강" : "오늘 제외";
-        actions.add(Theme.button(cancelLabel,canceled,() -> {
-            model.toggleCancellation(event.id(),selectedDate);
-            unsaved=true;
-            persist();
-            refresh();
-        }));
-        card.add(actions,BorderLayout.SOUTH);
-        return card;
-    }
-
-    private JPanel legCard(CampusMapPanel.Leg leg) {
-        JPanel panel=Theme.transparent(new BorderLayout(0,5));
-        panel.setBorder(BorderFactory.createEmptyBorder(1,9,4,4));
-        String travel;
-        Color color=Theme.MUTED;
-        if(!leg.route().reachable()) {
-            travel="도보 경로를 찾지 못했습니다";
-            color=Theme.WARNING;
-            JLabel details=Theme.label("OSM 보행로 연결을 확인해 주세요",10,Theme.MUTED);
-            details.setToolTipText(leg.route().message());
-            panel.add(details,BorderLayout.CENTER);
+    private void updateMapSummary() {
+        routeDetails.setVisible(searchedRoute != null);
+        mapSummary.setForeground(Theme.MUTED);
+        if (searchedRoute != null) {
+            MapData.Route route = searchedRoute.route();
+            routeFrom.setText("출발  " + searchedRoute.from().name());
+            routeTo.setText("도착  " + searchedRoute.to().name());
+            routeNote.setText(route.message().contains("추정") ? "보행로까지의 연결 일부 추정" : " ");
+            routeNote.setToolTipText(route.message());
+            if (route.reachable()) mapSummary.setText(distanceText(route.meters()));
+            else {
+                mapSummary.setText("경로 없음");
+                mapSummary.setForeground(Theme.WARNING);
+            }
         } else {
-            travel=String.format(Locale.ROOT,"↓  도보 약 %d분 · %,.0f m",leg.minutes(),leg.route().meters());
-            long slack=leg.gapMinutes()-leg.minutes();
-            String timing;
-            if(leg.gapMinutes()<0) {
-                timing="일정 시간이 "+(-leg.gapMinutes())+"분 겹칩니다";
-                color=Theme.WARNING;
-            } else if(slack<0) {
-                timing="다음 일정까지 이동 시간이 "+(-slack)+"분 부족합니다";
-                color=Theme.WARNING;
-            } else {
-                timing="이동 후 "+slack+"분 여유 · "+leg.to().event().start().minusMinutes(leg.minutes()).format(CLOCK)+"까지 출발";
-            }
-            panel.add(Theme.label(timing,10,color),BorderLayout.CENTER);
-            if(leg.route().message().contains("추정")) {
-                JLabel estimate = Theme.label("출입구와 보행로 사이 연결 일부 추정",10,Theme.MUTED);
-                estimate.setToolTipText(leg.route().message());
-                panel.add(estimate,BorderLayout.SOUTH);
-            }
+            long missing = map.legs().stream().filter(leg -> !leg.route().reachable()).count();
+            double meters = map.legs().stream().filter(leg -> leg.route().reachable())
+                    .mapToDouble(leg -> leg.route().meters()).sum();
+            if (map.legs().isEmpty()) mapSummary.setText(" ");
+            else if (missing == map.legs().size()) mapSummary.setText("경로 없음");
+            else mapSummary.setText(distanceText(meters) + (missing > 0 ? " · 일부 경로 없음" : ""));
         }
-        panel.add(Theme.label(travel,11,color),BorderLayout.NORTH);
-        return panel;
     }
 
-    private void edit(Event event,boolean repeat) {
-        edit(event, repeat, null);
+    private String distanceText(double meters) {
+        int minutes = (int) Math.ceil(meters / (CampusMapPanel.WALKING_METERS_PER_SECOND * 60));
+        return String.format(Locale.ROOT, "%,.0f m · 약 %d분", meters, minutes);
     }
 
-    private void edit(Event event, boolean repeat, ScheduleSlot slot) {
-        noteTimer.stop();
-        if(unsaved && !persist())return;
-        EventDialog.Result result=EventDialog.open(this,data,model,selectedDate,selectedBuilding,event,repeat,slot);
-        if(result==null)return;
-        if(result.deleted())model.removeEvent(result.event().id());
-        else model.putEvent(result.event());
-        unsaved=true;
+    private void exportData() {
+        if (!flushNotes()) return;
+        JFileChooser chooser = shareChooser();
+        chooser.setDialogTitle("공유 파일 저장");
+        chooser.setSelectedFile(new java.io.File("campus-share-" + PlannerTime.today() + ".xml"));
+        if (chooser.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) return;
+        Path path = chooser.getSelectedFile().toPath().toAbsolutePath();
+        if (!path.toString().toLowerCase(Locale.ROOT).endsWith(".xml")) path = Path.of(path + ".xml");
+        if (Files.exists(path) && JOptionPane.showConfirmDialog(this, "같은 이름의 파일을 덮어쓸까요?",
+                "공유 파일 저장", JOptionPane.YES_NO_OPTION) != JOptionPane.YES_OPTION) return;
+        try {
+            PlannerStore.save(path, model);
+            JOptionPane.showMessageDialog(this, "공유 파일을 저장했습니다.\n일정, 할일, 장소 이름, 핀, 즐겨찾기와 메모가 포함됩니다.\n" + path);
+        } catch (IOException failure) {
+            showError("공유 파일을 저장하지 못했습니다.", failure);
+        }
+    }
+
+    private void importData() {
+        if (!flushNotes()) return;
+        JFileChooser chooser = shareChooser();
+        chooser.setDialogTitle("공유 파일 가져오기");
+        if (chooser.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) return;
+        try {
+            PlannerModel incoming = PlannerStore.load(chooser.getSelectedFile().toPath());
+            String summary = "일정 " + incoming.events().size() + "개, 할일 " + incoming.deadlines().size()
+                    + "개, 핀 " + incoming.pins().size() + "개를 현재 데이터에 합칩니다.";
+            if (JOptionPane.showConfirmDialog(this, summary, "가져오기",
+                    JOptionPane.OK_CANCEL_OPTION) != JOptionPane.OK_OPTION) return;
+            model.mergeFrom(incoming);
+            changed();
+        } catch (IOException failure) {
+            showError("공유 파일을 읽지 못했습니다.", failure);
+        }
+    }
+
+    private JFileChooser shareChooser() {
+        JFileChooser chooser = new JFileChooser();
+        chooser.setFileFilter(new FileNameExtensionFilter("일정 공유 파일 (*.xml)", "xml"));
+        return chooser;
+    }
+
+    private void changed() {
+        unsaved = true;
         persist();
         refresh();
     }
 
-    private void selectBuilding(Building building) {
-        selectedBuilding=building;
-        map.select(building.id());
-        updateSelectedBuilding();
-        if(!Objects.equals(buildings.getSelectedValue(),building)) {
-            boolean old=refreshing;
-            refreshing=true;
-            buildings.setSelectedValue(building,true);
-            refreshing=old;
-        }
-    }
-
-    private void updateSelectedBuilding() {
-        boolean selected=selectedBuilding!=null;
-        favoriteButton.setEnabled(selected);
-        buildingEventButton.setEnabled(selected);
-        if(!selected)return;
-        selectedName.setText(selectedBuilding.name());
-        selectedName.setToolTipText(selectedBuilding.name());
-        selectedDetail.setText("OSM "+selectedBuilding.id());
-        favoriteButton.setText(model.isFavorite(selectedBuilding.id()) ? "★ 즐겨찾기 해제" : "☆ 즐겨찾기 추가");
-    }
-
-    private void toggleFavorite() {
-        if(selectedBuilding==null)return;
-        model.toggleFavorite(selectedBuilding.id());
-        unsaved=true;
-        persist();
-        refreshBuildings();
-        updateSelectedBuilding();
-        map.repaint();
-    }
-
-    private void refreshBuildings() {
-        boolean old=refreshing;
-        refreshing=true;
-        String query=search.getText().strip().toLowerCase(Locale.ROOT);
-        buildingItems.clear();
-        data.buildings().stream()
-                .filter(b -> b.name().toLowerCase(Locale.ROOT).contains(query))
-                .filter(b -> !favoritesOnly.isSelected() || model.isFavorite(b.id()))
-                .sorted(Comparator.comparing((Building b) -> !model.isFavorite(b.id()))
-                        .thenComparing(b -> b.name().startsWith("이름 없는"))
-                        .thenComparing(Building::name))
-                .forEach(buildingItems::addElement);
-        if(selectedBuilding!=null)buildings.setSelectedValue(selectedBuilding,true);
-        buildingCount.setText(buildingItems.size()+"개 장소 · 즐겨찾기 "+model.favorites().size()+"개");
-        refreshing=old;
+    private boolean flushNotes() {
+        noteTimer.stop();
+        return !unsaved || persist();
     }
 
     private boolean persist() {
         noteTimer.stop();
         try {
-            PlannerStore.save(statePath,model);
-            unsaved=false;
-            saveStatus.setForeground(Theme.MUTED);
-            saveStatus.setText("저장됨 · "+LocalTime.now().format(CLOCK));
+            library.sync();
+            PlannerStore.save(statePath, model);
+            unsaved = false;
+            saveStatus.setText("저장됨");
             return true;
-        } catch(IOException ex) {
-            unsaved=true;
-            saveStatus.setForeground(Theme.WARNING);
-            saveStatus.setText("저장 실패 · 변경 내용은 현재 창에 유지됩니다");
-            JOptionPane.showMessageDialog(this,"일정을 저장하지 못했습니다.\n"+statePath+"\n"+ex.getMessage()+"\n경로를 확인한 뒤 다시 변경하거나 창을 닫아 저장을 재시도하세요.","저장 실패",JOptionPane.ERROR_MESSAGE);
+        } catch (IOException failure) {
+            unsaved = true;
+            saveStatus.setText("저장 실패");
+            showError("변경 내용은 현재 창에 있습니다. 저장 경로를 확인해 주세요.", failure);
             return false;
         }
     }
+
+    private void showError(String message, Exception failure) {
+        JOptionPane.showMessageDialog(this, message + "\n" + failure.getMessage(), "오류", JOptionPane.ERROR_MESSAGE);
+    }
 }
+

@@ -25,6 +25,7 @@ import org.xml.sax.helpers.DefaultHandler;
 /** An offline OSM extract, its display geometry, and its pedestrian routing graph. */
 public final class MapData {
     public record GeoPoint(double lat, double lon) { }
+    public record BusStop(String id, String name, GeoPoint point) { }
     public record Building(String id, String name, List<GeoPoint> outline, GeoPoint center) {
         public Building { outline = List.copyOf(outline); }
         @Override public String toString() { return name; }
@@ -39,6 +40,7 @@ public final class MapData {
     private static final double EARTH_RADIUS = 6_371_008.8;
     private static final int FLOYD_LIMIT = 900;
     private final List<Building> buildings = new ArrayList<>();
+    private final List<BusStop> busStops = new ArrayList<>();
     private final List<MapWay> ways = new ArrayList<>();
     private final Map<String, Building> byId = new LinkedHashMap<>();
     private final Map<String, List<Access>> access = new HashMap<>();
@@ -50,6 +52,7 @@ public final class MapData {
     private final List<List<GeoPoint>> obstacles = new ArrayList<>();
     private List<GeoPoint> boundary = List.of();
     private double minLat, maxLat, minLon, maxLon;
+    private double[] extractBounds;
     private double[][] distances;
     private int[][] next;
 
@@ -57,7 +60,14 @@ public final class MapData {
     private record Way(long id, List<Long> refs, Map<String,String> tags) { }
     private record Member(long ref, String role) { }
     private record Relation(long id, List<Member> members, Map<String,String> tags) { }
-    private record Access(long nodeId, GeoPoint door, double length, boolean estimated) { }
+    private record Access(long nodeId, GeoPoint door, double length, boolean estimated,
+                          List<GeoPoint> link, long edgeFrom, long edgeTo, double offset) {
+        Access(long nodeId, GeoPoint door, double length, boolean estimated) {
+            this(nodeId, door, length, estimated, List.of(), -1, -1, 0);
+        }
+    }
+    private record PinSnap(int from, int to, int segment, GeoPoint point,
+                           double distance, double offset) { }
     private record QueueItem(int node, double distance) { }
     private static final class Vertex {
         final long id;
@@ -87,6 +97,7 @@ public final class MapData {
     }
 
     public List<Building> buildings() { return Collections.unmodifiableList(buildings); }
+    public List<BusStop> busStops() { return Collections.unmodifiableList(busStops); }
     public List<MapWay> ways() { return Collections.unmodifiableList(ways); }
     public Building building(String id) { return byId.get(id); }
     public double minLat() { return minLat; }
@@ -110,7 +121,25 @@ public final class MapData {
         maxLat = boundary.stream().mapToDouble(GeoPoint::lat).max().orElseThrow();
         minLon = boundary.stream().mapToDouble(GeoPoint::lon).min().orElseThrow();
         maxLon = boundary.stream().mapToDouble(GeoPoint::lon).max().orElseThrow();
+        extractBounds = source.bounds;
         ways.add(new MapWay("w" + campus.id, "boundary", boundary));
+        for (Node node : source.nodes.values()) {
+            if (busPlatform(node.tags)) addBusStop("bus:n" + node.id, node.tags, node.point);
+        }
+        for (Way way : source.ways.values()) {
+            List<GeoPoint> outline = points(way.refs, source.nodes);
+            if (busPlatform(way.tags) && !outline.isEmpty()) {
+                addBusStop("bus:w" + way.id, way.tags, centroid(outline));
+            }
+        }
+        for (Node node : source.nodes.values()) {
+            if (!"stop_position".equals(node.tags.get("public_transport"))
+                    || !"yes".equals(node.tags.get("bus"))) continue;
+            String title = name(node.tags);
+            if (busStops.stream().noneMatch(stop -> stop.name.equals(title) && distance(stop.point, node.point) < 75)) {
+                addBusStop("bus:n" + node.id, node.tags, node.point);
+            }
+        }
 
         Map<String, List<Long>> buildingRefs = new HashMap<>();
         Set<Long> relationMembers = new HashSet<>();
@@ -130,7 +159,7 @@ public final class MapData {
                 if (addBuilding("w" + way.id, way.tags, outline)) buildingRefs.put("w" + way.id, way.refs);
             }
             String kind = kind(way.tags);
-            if (kind != null && outline.stream().anyMatch(this::inDisplayBounds)) {
+            if (kind != null && outline.stream().anyMatch(this::inExtractBounds)) {
                 ways.add(new MapWay("w" + way.id, kind, outline));
                 if ("water".equals(kind)) obstacles.add(outline);
             }
@@ -155,18 +184,25 @@ public final class MapData {
         return true;
     }
 
+    private static boolean busPlatform(Map<String,String> tags) {
+        return "bus_stop".equals(tags.get("highway"))
+                || "platform".equals(tags.get("public_transport")) && "yes".equals(tags.get("bus"));
+    }
+
+    private void addBusStop(String id, Map<String,String> tags, GeoPoint point) {
+        String title = name(tags);
+        if (!title.isBlank() && inExtractBounds(point)) busStops.add(new BusStop(id, title, point));
+    }
+
+    private boolean inExtractBounds(GeoPoint point) {
+        return extractBounds == null ? inDisplayBounds(point)
+                : point.lat >= extractBounds[0] && point.lon >= extractBounds[1]
+                    && point.lat <= extractBounds[2] && point.lon <= extractBounds[3];
+    }
+
     private boolean inDisplayBounds(GeoPoint p) {
         return p.lat >= minLat-0.00045 && p.lat <= maxLat+0.00045
                 && p.lon >= minLon-0.00055 && p.lon <= maxLon+0.00055;
-    }
-
-    private boolean nearCampus(GeoPoint p) {
-        if (!inDisplayBounds(p)) return false;
-        if (inside(p, boundary)) return true;
-        for (int i = 1; i < boundary.size(); i++) {
-            if (segmentDistance(p, boundary.get(i-1), boundary.get(i)) < 42) return true;
-        }
-        return false;
     }
 
     private void addRoad(Way way, Map<Long,Node> nodes) {
@@ -174,7 +210,7 @@ public final class MapData {
             Node a = nodes.get(way.refs.get(i-1)), b = nodes.get(way.refs.get(i));
             if (a == null || b == null || blocked(a.tags) || blocked(b.tags)) continue;
             GeoPoint middle = new GeoPoint((a.point.lat+b.point.lat)/2,(a.point.lon+b.point.lon)/2);
-            if (!nearCampus(middle)) continue;
+            if (!inExtractBounds(middle)) continue;
             Vertex va = rawGraph.computeIfAbsent(a.id, id -> new Vertex(id,a.point));
             Vertex vb = rawGraph.computeIfAbsent(b.id, id -> new Vertex(id,b.point));
             double length = distance(a.point,b.point);
@@ -251,7 +287,7 @@ public final class MapData {
         for (int i = 1; i < 10; i++) {
             double f = i/10.0;
             GeoPoint p = new GeoPoint(a.lat+(b.lat-a.lat)*f,a.lon+(b.lon-a.lon)*f);
-            if (inside(p,target.outline)) return false;
+            if (target != null && inside(p,target.outline)) return false;
             for (Building other : buildings) {
                 if (other != target && Math.abs(other.center.lat-p.lat) < 0.0015
                         && Math.abs(other.center.lon-p.lon) < 0.0018 && inside(p,other.outline)) return false;
@@ -360,38 +396,134 @@ public final class MapData {
         String key = from.id+":"+to.id;
         Route cached = routeCache.get(key);
         if (cached != null) return cached;
+        Route route = routeBetween(access.getOrDefault(from.id,List.of()), access.getOrDefault(to.id,List.of()));
+        routeCache.put(key,route);
+        return route;
+    }
+
+    public synchronized Route route(GeoPoint from, GeoPoint to) {
+        if (!validPoint(from) || !validPoint(to)) return unavailable("핀 좌표가 올바르지 않습니다.");
+        if (distance(from,to) < 0.1) return new Route(List.of(from),0,true,"");
+        return routeBetween(pinAccess(from,true),pinAccess(to,false));
+    }
+
+    public synchronized Route route(Building from, GeoPoint to) {
+        if (from == null || !validPoint(to)) return unavailable("장소 정보가 없습니다.");
+        return routeBetween(access.getOrDefault(from.id,List.of()),pinAccess(to,false));
+    }
+
+    public synchronized Route route(GeoPoint from, Building to) {
+        if (!validPoint(from) || to == null) return unavailable("장소 정보가 없습니다.");
+        return routeBetween(pinAccess(from,true),access.getOrDefault(to.id,List.of()));
+    }
+
+    private static boolean validPoint(GeoPoint point) {
+        return point != null && Double.isFinite(point.lat) && Double.isFinite(point.lon)
+                && Math.abs(point.lat) <= 90 && Math.abs(point.lon) <= 180;
+    }
+
+    private List<Access> pinAccess(GeoPoint pin, boolean departing) {
+        List<PinSnap> snaps = new ArrayList<>();
+        for (int from = 0; from < graph.size(); from++) {
+            for (long destination : graph.get(from).edges.keySet()) {
+                int to = graphIndex.get(destination);
+                List<GeoPoint> line = geometry.get(edgeKey(from,to));
+                if (line == null) continue;
+                PinSnap best = null;
+                double offset = 0;
+                for (int segment = 1; segment < line.size(); segment++) {
+                    GeoPoint a = line.get(segment-1), b = line.get(segment);
+                    GeoPoint projection = segmentProjection(pin,a,b);
+                    double length = distance(pin,projection);
+                    if (length <= 75 && (best == null || length < best.distance)) {
+                        best = new PinSnap(from,to,segment,projection,length,offset+distance(a,projection));
+                    }
+                    offset += distance(a,b);
+                }
+                if (best != null) snaps.add(best);
+            }
+        }
+        snaps.sort(Comparator.comparingDouble(PinSnap::distance));
+        List<Access> result = new ArrayList<>();
+        double nearest = Double.POSITIVE_INFINITY;
+        for (PinSnap snap : snaps) {
+            if (result.size() >= 8 || snap.distance > nearest+8) break;
+            if (!connectorClear(pin,snap.point,null)) continue;
+            nearest = Math.min(nearest,snap.distance);
+            List<GeoPoint> line = geometry.get(edgeKey(snap.from,snap.to));
+            List<GeoPoint> link = new ArrayList<>(List.of(pin,snap.point));
+            int endpoint;
+            if (departing) {
+                link.addAll(line.subList(snap.segment,line.size()));
+                endpoint = snap.to;
+            } else {
+                for (int i = snap.segment-1; i >= 0; i--) link.add(line.get(i));
+                endpoint = snap.from;
+            }
+            double length = 0;
+            for (int i = 1; i < link.size(); i++) length += distance(link.get(i-1),link.get(i));
+            result.add(new Access(graph.get(endpoint).id,pin,length,snap.distance > 0.1,
+                    List.copyOf(link),graph.get(snap.from).id,graph.get(snap.to).id,snap.offset));
+        }
+        return result;
+    }
+
+    private Route routeBetween(List<Access> sources, List<Access> destinations) {
         double best = Double.POSITIVE_INFINITY;
-        List<Integer> bestPath = List.of();
-        Access entry = null, exit = null;
-        for (Access a : access.getOrDefault(from.id,List.of())) {
-            for (Access b : access.getOrDefault(to.id,List.of())) {
+        List<GeoPoint> bestPoints = List.of();
+        boolean estimated = false;
+        for (Access a : sources) {
+            for (Access b : destinations) {
+                if (a.edgeFrom >= 0 && a.edgeFrom == b.edgeFrom && a.edgeTo == b.edgeTo && a.offset <= b.offset) {
+                    double direct = distance(a.door,a.link.get(1)) + b.offset-a.offset + distance(b.link.get(1),b.door);
+                    if (direct < best) {
+                        best = direct;
+                        bestPoints = sameEdgePoints(a,b);
+                        estimated = a.estimated || b.estimated;
+                    }
+                }
                 int s = graphIndex.get(a.nodeId), t = graphIndex.get(b.nodeId);
                 List<Integer> path = path(s,t);
                 if (path.isEmpty()) continue;
                 double length = a.length+b.length;
                 for (int i = 1; i < path.size(); i++) length += graph.get(path.get(i-1)).edges.get(graph.get(path.get(i)).id);
-                if (length < best) { best = length; bestPath = path; entry = a; exit = b; }
+                if (length < best) {
+                    best = length;
+                    bestPoints = routePoints(a,b,path);
+                    estimated = a.estimated || b.estimated;
+                }
             }
         }
-        Route route;
-        if (entry == null) {
-            route = unavailable("OSM에 연결된 보행 경로가 없습니다.");
-        } else {
-            List<GeoPoint> points = new ArrayList<>();
-            points.add(entry.door);
-            points.add(graph.get(bestPath.get(0)).point);
-            for (int i = 1; i < bestPath.size(); i++) {
-                List<GeoPoint> leg = geometry.get(edgeKey(bestPath.get(i-1),bestPath.get(i)));
-                if (leg != null) points.addAll(leg.subList(1,leg.size()));
-            }
-            points.add(exit.door);
-            String note = entry.estimated || exit.estimated
-                    ? "OSM 보행 경로 · 건물과 길 사이의 짧은 연결 구간은 추정"
-                    : "OSM 보행 경로 · 실내 이동 시간 별도";
-            route = new Route(points,best,true,note);
+        if (!Double.isFinite(best)) return unavailable("OSM에 연결된 보행 경로가 없습니다.");
+        return new Route(bestPoints,best,true,estimated ? "장소와 보행로 사이의 연결 일부 추정" : "");
+    }
+
+    private List<GeoPoint> routePoints(Access from, Access to, List<Integer> path) {
+        List<GeoPoint> points = new ArrayList<>();
+        if (from.link.isEmpty()) {
+            points.add(from.door);
+            points.add(graph.get(path.get(0)).point);
+        } else points.addAll(from.link);
+        for (int i = 1; i < path.size(); i++) {
+            List<GeoPoint> leg = geometry.get(edgeKey(path.get(i-1),path.get(i)));
+            if (leg != null) points.addAll(leg.subList(1,leg.size()));
         }
-        routeCache.put(key,route);
-        return route;
+        if (to.link.isEmpty()) points.add(to.door);
+        else for (int i = to.link.size()-2; i >= 0; i--) points.add(to.link.get(i));
+        return points;
+    }
+
+    private List<GeoPoint> sameEdgePoints(Access from, Access to) {
+        List<GeoPoint> points = new ArrayList<>(List.of(from.door,from.link.get(1)));
+        List<GeoPoint> line = geometry.get(edgeKey(graphIndex.get(from.edgeFrom),graphIndex.get(from.edgeTo)));
+        double offset = 0;
+        for (int i = 1; i < line.size(); i++) {
+            offset += distance(line.get(i-1),line.get(i));
+            if (offset > from.offset && offset < to.offset) points.add(line.get(i));
+        }
+        points.add(to.link.get(1));
+        points.add(to.door);
+        return points;
     }
 
     private List<Integer> path(int source, int target) {
@@ -521,12 +653,16 @@ public final class MapData {
     }
 
     private static double segmentDistance(GeoPoint p, GeoPoint a, GeoPoint b) {
+        return distance(p,segmentProjection(p,a,b));
+    }
+
+    private static GeoPoint segmentProjection(GeoPoint p, GeoPoint a, GeoPoint b) {
         double cos = Math.cos(Math.toRadians(p.lat));
         double dx = (b.lon-a.lon)*cos, dy = b.lat-a.lat;
         double px = (p.lon-a.lon)*cos, py = p.lat-a.lat;
         double denominator = dx*dx+dy*dy;
         double f = denominator == 0 ? 0 : Math.max(0,Math.min(1,(px*dx+py*dy)/denominator));
-        return distance(p,new GeoPoint(a.lat+(b.lat-a.lat)*f,a.lon+(b.lon-a.lon)*f));
+        return new GeoPoint(a.lat+(b.lat-a.lat)*f,a.lon+(b.lon-a.lon)*f);
     }
 
     private static final class Reader extends DefaultHandler {
@@ -539,9 +675,17 @@ public final class MapData {
         Map<String,String> tags;
         List<Long> refs;
         List<Member> members;
+        double[] bounds;
         @Override public void startElement(String uri,String local,String q,Attributes a) throws SAXException {
             try {
-                if (Set.of("node","way","relation").contains(q)) {
+                if (q.equals("bounds")) {
+                    bounds = new double[] { Double.parseDouble(a.getValue("minlat")), Double.parseDouble(a.getValue("minlon")),
+                            Double.parseDouble(a.getValue("maxlat")), Double.parseDouble(a.getValue("maxlon")) };
+                    if (!Double.isFinite(bounds[0]) || !Double.isFinite(bounds[1]) || !Double.isFinite(bounds[2])
+                            || !Double.isFinite(bounds[3]) || bounds[0] > bounds[2] || bounds[1] > bounds[3]) {
+                        throw new IllegalArgumentException("잘못된 지도 범위");
+                    }
+                } else if (Set.of("node","way","relation").contains(q)) {
                     type = q; id = Long.parseLong(a.getValue("id")); tags = new HashMap<>();
                     if (q.equals("node")) point = new GeoPoint(Double.parseDouble(a.getValue("lat")),Double.parseDouble(a.getValue("lon")));
                     if (q.equals("way")) refs = new ArrayList<>();

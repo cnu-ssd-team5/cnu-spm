@@ -5,7 +5,8 @@ import java.util.Objects;
 
 /** Suggested same-day times for an insertion point in the daily schedule. */
 record ScheduleSlot(LocalTime start, LocalTime end) {
-    private static final int LAST_MINUTE = 23 * 60 + 59;
+    private static final int DAY_END = 24 * 60;
+    private static final int DAY_START = 8 * 60;
 
     ScheduleSlot {
         Objects.requireNonNull(start, "시작 시각");
@@ -16,32 +17,34 @@ record ScheduleSlot(LocalTime start, LocalTime end) {
     }
 
     static ScheduleSlot before(LocalTime boundary) {
-        int endMinute = floorMinute(boundary);
-        return fromMinutes(Math.max(0, endMinute - 60), endMinute);
+        int endMinute = floorFiveMinutes(boundary);
+        return fromMinutes(Math.max(DAY_START, endMinute - 60), endMinute);
     }
 
     static ScheduleSlot after(LocalTime boundary) {
-        int startMinute = ceilingMinute(boundary);
-        return fromMinutes(startMinute, Math.min(LAST_MINUTE, startMinute + 60));
+        int startMinute = Math.max(DAY_START, ceilingFiveMinutes(boundary));
+        return fromMinutes(startMinute, Math.min(DAY_END, startMinute + 60));
     }
 
     static ScheduleSlot between(LocalTime previousEnd, LocalTime nextStart) {
-        return fromMinutes(ceilingMinute(previousEnd), floorMinute(nextStart));
+        return fromMinutes(Math.max(DAY_START, ceilingFiveMinutes(previousEnd)), floorFiveMinutes(nextStart));
     }
 
-    private static int floorMinute(LocalTime time) {
+    private static int floorFiveMinutes(LocalTime time) {
         Objects.requireNonNull(time, "기준 시각");
-        return time.getHour() * 60 + time.getMinute();
+        if (time.equals(LocalTime.MAX)) return DAY_END;
+        return (time.getHour() * 60 + time.getMinute()) / 5 * 5;
     }
 
-    private static int ceilingMinute(LocalTime time) {
-        int minute = floorMinute(time);
-        return minute + (time.getSecond() != 0 || time.getNano() != 0 ? 1 : 0);
+    private static int ceilingFiveMinutes(LocalTime time) {
+        int minute = time.getHour() * 60 + time.getMinute();
+        int rounded = (minute + 4) / 5 * 5;
+        return rounded == minute && (time.getSecond() != 0 || time.getNano() != 0) ? rounded + 5 : rounded;
     }
 
     private static ScheduleSlot fromMinutes(int startMinute, int endMinute) {
-        if (startMinute < 0 || endMinute > LAST_MINUTE || startMinute >= endMinute) return null;
+        if (startMinute < 0 || endMinute > DAY_END || startMinute >= endMinute) return null;
         return new ScheduleSlot(LocalTime.of(startMinute / 60, startMinute % 60),
-                LocalTime.of(endMinute / 60, endMinute % 60));
+                endMinute == DAY_END ? LocalTime.MAX : LocalTime.of(endMinute / 60, endMinute % 60));
     }
 }

@@ -3,3 +3,9 @@
 /data/*.lock
 /data/.campus-planner-*.tmp
 *.class
+/materials/
+/dist/
+/data/material-folders.properties
+/data/.material-links-*.tmp
+/.folder-recent/
+/.folder-trash/

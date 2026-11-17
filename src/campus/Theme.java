@@ -12,11 +12,26 @@ final class Theme {
     static final Color PALE_BLUE = new Color(234, 241, 255);
     static final Color LINE = new Color(225, 231, 240);
     static final Color WARNING = new Color(172, 80, 33);
+    static final Color SATURDAY = new Color(190, 227, 250);
+    static final Color SUNDAY = new Color(250, 207, 224);
+    private static final String FONT = pickFont();
 
     private Theme() { }
 
     static Font font(int size, int style) {
-        return new Font("맑은 고딕", style, size);
+        return new Font(FONT, style, size + 3);
+    }
+
+    private static String pickFont() {
+        java.util.List<String> installed = java.util.List.of(GraphicsEnvironment.getLocalGraphicsEnvironment().getAvailableFontFamilyNames());
+        for (String name : java.util.List.of("맑은 고딕", "Malgun Gothic", "Apple SD Gothic Neo", "Noto Sans CJK KR", "NanumGothic")) {
+            if (installed.contains(name)) return name;
+        }
+        return Font.DIALOG;
+    }
+
+    static Color courseColor(String title) {
+        return Color.getHSBColor(Math.floorMod(title.hashCode(), 360) / 360f, .18f, .97f);
     }
 
     static JLabel label(String text, int size, Color color) {
@@ -37,14 +52,24 @@ final class Theme {
             @Override protected void paintComponent(Graphics graphics) {
                 Graphics2D g = (Graphics2D) graphics.create();
                 g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-                Color fill = primary ? BLUE : Color.WHITE;
-                if (getModel().isRollover()) fill = primary ? BLUE.darker() : PALE_BLUE;
+                boolean danger = Boolean.TRUE.equals(getClientProperty("danger"));
+                Color custom = (Color) getClientProperty("calendar.fill");
+                Color fill = danger ? new Color(190, 47, 47) : custom != null ? custom : primary ? BLUE : Color.WHITE;
+                if (getModel().isRollover()) fill = danger || primary || custom != null ? fill.darker() : PALE_BLUE;
                 if (!isEnabled()) fill = LINE;
                 g.setColor(fill);
                 g.fillRoundRect(0, 0, getWidth(), getHeight(), 12, 12);
                 if (!primary) {
                     g.setColor(isFocusOwner() ? BLUE : LINE);
                     g.drawRoundRect(0, 0, getWidth() - 1, getHeight() - 1, 12, 12);
+                }
+                if (Boolean.TRUE.equals(getClientProperty("calendar.selected"))) {
+                    g.setColor(BLUE); g.setStroke(new BasicStroke(2));
+                    g.drawRoundRect(1, 1, getWidth() - 3, getHeight() - 3, 12, 12);
+                }
+                if (Boolean.TRUE.equals(getClientProperty("calendar.today"))) {
+                    g.setColor(new Color(230, 173, 30)); g.setStroke(new BasicStroke(3));
+                    g.drawRoundRect(3, 3, getWidth() - 7, getHeight() - 7, 10, 10);
                 }
                 g.dispose();
                 super.paintComponent(graphics);
@@ -57,6 +82,12 @@ final class Theme {
         button.setFocusPainted(false);
         button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         button.addActionListener(e -> action.run());
+        return button;
+    }
+
+    static JButton dangerButton(String text, Runnable action) {
+        JButton button = button(text, true, action);
+        button.putClientProperty("danger", true);
         return button;
     }
 
