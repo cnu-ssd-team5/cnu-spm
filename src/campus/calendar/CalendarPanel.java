@@ -31,6 +31,9 @@ public final class CalendarPanel extends JPanel {
     private LocalDate selectedDate = PlannerTime.today();
     private Semester selectedSemester = Semester.forDate(selectedDate);
     private boolean refreshing;
+    private LocalDate lastClickDate;
+    private long lastClickWhen;
+    private Point lastClickPoint;
 
     public CalendarPanel(PlannerModel model, Consumer<LocalDate> onDateSelect,
                   Consumer<LocalDate> onAddDeadline, Consumer<Deadline> onEditDeadline) {
@@ -111,18 +114,27 @@ public final class CalendarPanel extends JPanel {
             days.getInputMap(JComponent.WHEN_FOCUSED).put(KeyStroke.getKeyStroke(key), key);
             days.getActionMap().put(key, new AbstractAction() {
                 @Override public void actionPerformed(ActionEvent event) {
+                    clearDateClick();
                     onDateSelect.accept(moveDate(selectedDate, key));
                     SwingUtilities.invokeLater(() -> focusSelectedDay());
                 }
             });
         }
+        days.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT).put(KeyStroke.getKeyStroke("ENTER"),"addDeadline");
+        days.getInputMap(JComponent.WHEN_FOCUSED).put(KeyStroke.getKeyStroke("ENTER"),"addDeadline");
+        days.getActionMap().put("addDeadline",new AbstractAction() {
+            @Override public void actionPerformed(ActionEvent event) {
+                clearDateClick();
+                onAddDeadline.accept(selectedDate);
+            }
+        });
         calendar.add(days, BorderLayout.CENTER);
         add(calendar, BorderLayout.CENTER);
 
         JPanel bottom = Theme.transparent(new BorderLayout());
         holidayRange.setToolTipText("확인된 공휴일만 표시하며, 공휴일이라고 일정을 자동으로 휴강 처리하지 않습니다.");
         bottom.add(holidayRange, BorderLayout.WEST);
-        bottom.add(Theme.button("+ 할일 추가", true, () -> onAddDeadline.accept(selectedDate)), BorderLayout.EAST);
+        bottom.add(Theme.label("날짜 더블클릭 또는 Enter로 할일 추가",11,Theme.MUTED),BorderLayout.EAST);
         add(bottom, BorderLayout.SOUTH);
     }
 
@@ -214,7 +226,20 @@ public final class CalendarPanel extends JPanel {
         day.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         day.setName(date.toString());
         day.setToolTipText(date + (holiday.isBlank() ? "" : " · " + holiday));
-        day.addActionListener(e -> onDateSelect.accept(date));
+        boolean[] mousePressed = {false};
+        day.addMouseListener(new MouseAdapter() {
+            @Override public void mousePressed(MouseEvent event) {
+                if (SwingUtilities.isLeftMouseButton(event)) mousePressed[0]=true;
+            }
+            @Override public void mouseReleased(MouseEvent event) { mousePressed[0]=false; }
+        });
+        day.addActionListener(e -> {
+            // Mouse clicks are handled below; Space/accessibility activation still selects the day.
+            if (!mousePressed[0]) {
+                clearDateClick();
+                onDateSelect.accept(date);
+            }
+        });
         dateRow.add(day, BorderLayout.WEST);
         List<Deadline> deadlines = model.deadlines(date);
         long scheduled = model.occurrences(date).stream().filter(o -> !o.canceled()).count() + deadlines.size();
@@ -277,14 +302,32 @@ public final class CalendarPanel extends JPanel {
         MouseAdapter select = new MouseAdapter() {
             @Override public void mouseClicked(MouseEvent event) {
                 if (SwingUtilities.isLeftMouseButton(event)) {
-                    cell.requestFocusInWindow();
-                    onDateSelect.accept(date);
+                    dateClicked(date,event);
                 }
             }
         };
-        for (JComponent area : List.of(cell, dateRow, topAligned, assignments)) area.addMouseListener(select);
+        for (JComponent area : List.of(cell, day, dateRow, topAligned, assignments)) area.addMouseListener(select);
         for (Component item : assignments.getComponents()) if (item instanceof JLabel) item.addMouseListener(select);
         return cell;
+    }
+
+    private void clearDateClick() {
+        lastClickDate=null;lastClickPoint=null;lastClickWhen=0;
+    }
+
+    private void dateClicked(LocalDate date, MouseEvent event) {
+        Point point=SwingUtilities.convertPoint(event.getComponent(),event.getPoint(),this);
+        Object setting=Toolkit.getDefaultToolkit().getDesktopProperty("awt.multiClickInterval");
+        int interval=setting instanceof Number value?value.intValue():500;
+        long elapsed=event.getWhen()-lastClickWhen;
+        boolean nearby=lastClickPoint!=null && lastClickPoint.distance(point)<=6;
+        boolean repeated=date.equals(lastClickDate) && nearby && elapsed>=0 && elapsed<=interval;
+        boolean doubleClick=event.getClickCount()==2 || (event.getClickCount()==1 && repeated);
+        if (doubleClick) clearDateClick();
+        else {lastClickDate=date;lastClickWhen=event.getWhen();lastClickPoint=point;}
+        onDateSelect.accept(date);
+        SwingUtilities.invokeLater(this::focusSelectedDay);
+        if (doubleClick) onAddDeadline.accept(date);
     }
 
     static String status(Deadline deadline) {

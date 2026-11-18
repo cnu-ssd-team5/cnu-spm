@@ -7,7 +7,8 @@ import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Locale;
 import javax.swing.*;
-import javax.swing.event.*;
+import campus.calendar.PlannerTime;
+import java.time.temporal.ChronoUnit;
 import campus.map.CampusMap;
 import campus.map.CampusMap.Building;
 import campus.model.PlannerModel;
@@ -15,7 +16,7 @@ import campus.model.PlannerModel.Event;
 import campus.model.PlannerModel.Occurrence;
 import campus.service.DayPlanService.Leg;
 
-/** 오른쪽의 하루 일정 카드, 일정 사이 이동 시간, 오늘의 메모. */
+/** 오른쪽의 하루 일정 카드, 일정 사이 이동 시간, 과제·할일 마감. */
 final class SchedulePanel {
     private static final DateTimeFormatter CLOCK = DateTimeFormatter.ofPattern("HH:mm");
     private static final DateTimeFormatter DAY = DateTimeFormatter.ofPattern("M월 d일 EEEE", Locale.KOREAN);
@@ -26,8 +27,6 @@ final class SchedulePanel {
     private final JLabel dayTitle = Theme.heading(" ", 16);
     private final JLabel daySummary = Theme.label(" ", 12, Theme.MUTED);
     private final JPanel schedule = Theme.transparent(new GridBagLayout());
-    private final JTextArea dayNote = new JTextArea(3, 20);
-    private boolean refreshing;
 
     SchedulePanel(MainFrame frame, CampusMap data, PlannerModel model) {
         this.frame = frame;
@@ -46,49 +45,19 @@ final class SchedulePanel {
         eventsCard.add(title,BorderLayout.NORTH);
         eventsCard.add(Theme.scroll(schedule),BorderLayout.CENTER);
         panel.add(eventsCard,BorderLayout.CENTER);
-        JPanel memo = Theme.card(new BorderLayout(0,10));
-        JPanel memoTitle = Theme.transparent(new BorderLayout());
-        memoTitle.add(Theme.heading("오늘의 메모",14),BorderLayout.WEST);
-        memoTitle.add(Theme.label("자동 저장",10,Theme.MUTED),BorderLayout.EAST);
-        memo.add(memoTitle,BorderLayout.NORTH);
-        dayNote.setLineWrap(true);
-        dayNote.setWrapStyleWord(true);
-        Theme.field(dayNote);
-        dayNote.setToolTipText("선택한 날짜의 준비물이나 할 일을 적어보세요");
-        JScrollPane memoScroll = Theme.scroll(dayNote);
-        memoScroll.setPreferredSize(new Dimension(0,86));
-        memo.add(memoScroll,BorderLayout.CENTER);
-        dayNote.getDocument().addDocumentListener(new DocumentListener() {
-            private void changed() {
-                if (refreshing) return;
-                model.setDayNote(frame.selectedDate(),dayNote.getText());
-                frame.noteChanged();
-            }
-            public void insertUpdate(DocumentEvent e) { changed(); }
-            public void removeUpdate(DocumentEvent e) { changed(); }
-            public void changedUpdate(DocumentEvent e) { changed(); }
-        });
-        panel.add(memo,BorderLayout.SOUTH);
     }
 
     void refresh(LocalDate date, List<Occurrence> occurrences, List<Leg> legs) {
-        refreshing = true;
-        try {
-            refreshSchedule(occurrences, legs);
-            dayTitle.setText(date.format(DAY));
-            dayTitle.setToolTipText(date.format(DAY));
-            dayNote.setText(model.dayNote(date));
-            dayNote.setCaretPosition(0);
-        } finally {
-            refreshing = false;
-        }
+        dayTitle.setText(date.format(DAY));
+        dayTitle.setToolTipText(date.format(DAY));
+        refreshSchedule(date, occurrences, legs);
     }
 
-    private void refreshSchedule(List<Occurrence> occurrences, List<Leg> legs) {
+    private void refreshSchedule(LocalDate date, List<Occurrence> occurrences, List<Leg> legs) {
         schedule.removeAll();
         long count = occurrences.stream().filter(o -> !o.canceled()).count();
         long canceled = occurrences.size()-count;
-        daySummary.setText("진행 "+count+"개"+(canceled==0 ? "" : " · 휴강/제외 "+canceled+"개")+(model.deadlines(frame.selectedDate()).isEmpty()?"":" · 할일 "+model.deadlines(frame.selectedDate()).size()+"개"));
+        daySummary.setText("진행 "+count+"개"+(canceled==0 ? "" : " · 휴강/제외 "+canceled+"개")+(model.deadlines(date).isEmpty()?"":" · 할일 "+model.deadlines(date).size()+"개"));
         GridBagConstraints c = new GridBagConstraints();
         c.gridx=0;
         c.gridy=0;
@@ -97,11 +66,10 @@ final class SchedulePanel {
         c.anchor=GridBagConstraints.NORTH;
         c.insets=new Insets(0,0,10,0);
         if (occurrences.isEmpty()) {
-            JPanel empty = Theme.transparent(new GridLayout(0,1,0,12));
-            empty.setBorder(BorderFactory.createEmptyBorder(35,4,25,4));
-            empty.add(Theme.heading("오늘의 일정을 채워보세요",15));
-            empty.add(Theme.label("고정 수업은 매주 자동으로 표시됩니다.",12,Theme.MUTED));
-            empty.add(Theme.label("동아리와 약속은 하루 일정으로 추가하세요.",11,Theme.MUTED));
+            JPanel empty = Theme.transparent(new GridLayout(0,1,0,8));
+            empty.setBorder(BorderFactory.createEmptyBorder(12,4,8,4));
+            empty.add(Theme.heading("등록된 일정이 없습니다.",14));
+            empty.add(Theme.label("날짜 옆 일정 추가로 등록하세요.",11,Theme.MUTED));
             schedule.add(empty,c);
             c.gridy++;
         }
@@ -115,15 +83,50 @@ final class SchedulePanel {
             schedule.add(eventCard(occurrence,occurrence.canceled() ? 0 : ++activeIndex),c);
             c.gridy++;
         }
-        for(var deadline:model.deadlines(frame.selectedDate())) {
-            JButton item=Theme.button(deadline.title()+" · "+(deadline.completed()?"완료":"미완료"),false,
-                    ()->frame.editDeadline(deadline,deadline.date()));
-            item.setForeground(deadline.completed()?Theme.MUTED:new Color(196,54,54));
-            schedule.add(item,c);c.gridy++;
+        c.insets = new Insets(14,0,8,0);
+        schedule.add(Theme.heading("과제·할일 마감",14),c);c.gridy++;
+        c.insets = new Insets(0,0,8,0);
+        LocalDate today = PlannerTime.today();
+        List<PlannerModel.Deadline> pending = model.deadlines().stream().filter(d -> !d.completed()).toList();
+        schedule.add(Theme.label("오늘 기준 · 미완료 " + pending.size() + "개",11,Theme.MUTED),c);c.gridy++;
+        if (pending.isEmpty()) {
+            schedule.add(Theme.label("남은 과제·할일이 없습니다.",12,Theme.MUTED),c);c.gridy++;
+        }
+        for (var deadline : pending) {
+            schedule.add(deadlineCard(deadline,today),c);c.gridy++;
+        }
+        List<PlannerModel.Deadline> completed = model.deadlines(date).stream().filter(PlannerModel.Deadline::completed).toList();
+        if (!completed.isEmpty()) {
+            schedule.add(Theme.label("선택한 날짜의 완료 항목",11,Theme.MUTED),c);c.gridy++;
+            for (var deadline : completed) {
+                schedule.add(deadlineCard(deadline,today),c);c.gridy++;
+            }
         }
         c.weighty=1;
         c.fill=GridBagConstraints.BOTH;
         schedule.add(Theme.transparent(new BorderLayout()),c);
+    }
+
+    static String deadlineStatus(PlannerModel.Deadline deadline, LocalDate today) {
+        if (deadline.completed()) return "완료";
+        long days = ChronoUnit.DAYS.between(today,deadline.date());
+        if (days < 0) return "마감 " + (-days) + "일 지남";
+        if (days == 0) return "D-day · 오늘 마감";
+        return "D-" + days + " · " + days + "일 남음";
+    }
+
+    private JButton deadlineCard(PlannerModel.Deadline deadline, LocalDate today) {
+        String status = deadlineStatus(deadline,today);
+        String date = deadline.date().format(DateTimeFormatter.ofPattern("yyyy.MM.dd"));
+        JButton item = Theme.button("<html>" + Theme.html(deadline.title()) + "<br><small>"
+                + date + " · " + status + "</small></html>",false,
+                () -> frame.editDeadline(deadline,deadline.date()));
+        item.setName("deadline:"+deadline.id());
+        item.setHorizontalAlignment(SwingConstants.LEFT);
+        item.setToolTipText(deadline.title()+" · "+date+" · "+status);
+        item.setForeground(deadline.completed()?Theme.MUTED:
+                deadline.date().isAfter(today)?Theme.INK:new Color(196,54,54));
+        return item;
     }
 
     private JPanel eventCard(Occurrence occurrence,int index) {

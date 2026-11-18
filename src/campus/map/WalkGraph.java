@@ -25,6 +25,7 @@ final class WalkGraph {
 
     private final CampusMap map;
     private final Map<Long, Vertex> rawGraph = new LinkedHashMap<>();
+    private final Set<Long> connectedNodes = new HashSet<>();
     final List<Vertex> graph = new ArrayList<>();
     final Map<Long, Integer> graphIndex = new HashMap<>();
     final Map<String, List<Access>> access = new HashMap<>();
@@ -37,6 +38,10 @@ final class WalkGraph {
             if (walkable(way.tags())) addRoad(way);
         }
         if (rawGraph.isEmpty()) throw new IOException("캠퍼스 보행 도로가 없습니다.");
+        for (Vertex vertex : rawGraph.values()) {
+            if (!vertex.edges.isEmpty()) connectedNodes.add(vertex.id);
+            connectedNodes.addAll(vertex.edges.keySet());
+        }
         // 직접 조사한 지름길(건물 통과 등)은 이 위치에서 rawGraph에 간선으로 추가하면 됩니다.
         for (Building b : map.buildings) access.put(b.id(), findAccess(b, map.buildingRefs.get(b.id())));
         compressGraph();
@@ -89,7 +94,7 @@ final class WalkGraph {
             for (long ref : refs) {
                 Node node = map.nodes.get(ref);
                 if (node == null || !node.tags().containsKey("entrance") || "no".equals(node.tags().get("entrance")) || blocked(node.tags())) continue;
-                if (rawGraph.containsKey(ref) && !rawGraph.get(ref).edges.isEmpty()) {
+                if (connectedNodes.contains(ref)) {
                     candidates.add(new Access(ref,node.point(),0,false));
                 } else {
                     Access a = nearestAccess(building,List.of(node.point()),55);
@@ -109,7 +114,7 @@ final class WalkGraph {
         Access result = null;
         for (GeoPoint door : doors) {
             for (Vertex vertex : rawGraph.values()) {
-                if (vertex.edges.isEmpty()) continue;
+                if (!connectedNodes.contains(vertex.id)) continue;
                 double meters = CampusMap.distance(door,vertex.point);
                 if (meters >= best || !connectorClear(door,vertex.point,building)) continue;
                 best = meters;

@@ -81,6 +81,8 @@ public final class ScheduleEntryWhiteBoxTest {
                     SchedulePanel daily=(SchedulePanel)field(host,"daily");
                     PlacesPanel places=(PlacesPanel)field(host,"places");
                     TimetablePanel timetable=(TimetablePanel)field(host,"timetable");
+                    test("removed-branding-not-in-main-ui",()->ok(components(host,JLabel.class).stream().noneMatch(l->l.getText()!=null&&(l.getText().equals("CNU")||l.getText().contains("나의 캠퍼스")||l.getText().contains("수업부터 약속까지"))),"branding remains"));
+                    test("removed-footer-text-not-in-main-ui",()->ok(components(host,JLabel.class).stream().noneMatch(l->l.getText()!=null&&l.getText().contains("보행 속도 1.3")),"old footer remains"));
                     test("one-add-button-next-to-date-even-when-empty",()->{
                         List<JButton> adds=components(daily.panel,JButton.class).stream().filter(b->b.getText()!=null&&b.getText().contains("일정 추가")).toList();
                         ok(adds.size()==1,"duplicate/absent add buttons");
