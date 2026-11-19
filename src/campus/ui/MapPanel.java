@@ -313,10 +313,16 @@ final class MapPanel extends JPanel {
             } else if (occupied.stream().anyMatch(r -> r.intersects(box))) continue;
             if (!box.intersects(0, 0, getWidth(), getHeight())) continue;
             occupied.add(box);
-            g.setColor(new Color(255, 255, 255, 230));
-            g.fillRoundRect((int)box.getX(), (int)box.getY(), (int)box.getWidth(), (int)box.getHeight(), 6, 6);
+            // 배경 박스 대신 글자에 얇은 흰 테두리를 둘러 지도 위에서도 읽히게 한다.
+            Shape outline = g.getFont().createGlyphVector(g.getFontRenderContext(), text)
+                    .getOutline((float)box.getX()+4, (float)box.getY()+14);
+            Stroke stroke = g.getStroke();
+            g.setStroke(new BasicStroke(3f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+            g.setColor(new Color(255, 255, 255, 220));
+            g.draw(outline);
+            g.setStroke(stroke);
             g.setColor(important ? Theme.BLUE : Theme.INK);
-            g.drawString(text, (float)box.getX()+4, (float)box.getY()+14);
+            g.fill(outline);
             if (model.isFavorite(building.id()) && !onRoute.contains(building.id())) {
                 g.setColor(new Color(211, 148, 31));
                 g.fill(new Ellipse2D.Double(xy.getX()-4, xy.getY()-4, 8, 8));
