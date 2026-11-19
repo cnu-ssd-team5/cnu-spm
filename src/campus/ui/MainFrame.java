@@ -19,6 +19,7 @@ import campus.model.PlannerStore;
 import campus.service.DayPlanService;
 import campus.service.DayPlanService.Leg;
 import campus.service.ScheduleSlot;
+import campus.service.DeadlineReminderService;
 import campus.calendar.*;
 import campus.places.PlaceService;
 import campus.sharing.ScheduleSharing;
@@ -56,6 +57,11 @@ public final class MainFrame extends JFrame {
     private final JLabel saveStatus = Theme.label("기기에 자동 저장", 11, Theme.MUTED);
     private final javax.swing.Timer noteTimer;
     private boolean unsaved;
+    private final JLabel notificationStatus=Theme.label("마감 알림: 내일·오늘 · 앱 실행 중",11,Theme.MUTED);
+    private final NotificationCenter notifications;
+    private final DeadlineReminderService reminders;
+    private final javax.swing.Timer reminderTimer;
+    private final TimeToolsPanel timeTools;
     private boolean workspaceExpanded;
     private final JButton workspaceButton=Theme.button("중앙 확대",false,this::toggleWorkspace);
 
@@ -92,6 +98,11 @@ public final class MainFrame extends JFrame {
         daily = new SchedulePanel(this, data, model);
         noteTimer = new javax.swing.Timer(600, e -> persist());
         noteTimer.setRepeats(false);
+        notifications=new NotificationCenter(notificationStatus);
+        reminders=new DeadlineReminderService(statePath.toAbsolutePath().resolveSibling(statePath.getFileName()+".reminders.properties"));
+        timeTools=new TimeToolsPanel(message->notifications.show("타이머",message));
+        reminderTimer=new javax.swing.Timer(60000,e->checkReminders());
+        reminderTimer.start();
         setDefaultCloseOperation(DO_NOTHING_ON_CLOSE);
         addWindowListener(new WindowAdapter() {
             @Override public void windowActivated(WindowEvent e) {if(!folders.isBusy())folders.refreshRecent();}
@@ -127,6 +138,7 @@ public final class MainFrame extends JFrame {
         body.add(center, BorderLayout.CENTER);
         page.add(body, BorderLayout.CENTER);
         JPanel footer = Theme.transparent(new BorderLayout());
+        footer.add(notificationStatus,BorderLayout.CENTER);
         JPanel storage=Theme.transparent(new FlowLayout(FlowLayout.RIGHT,6,0));
         storage.add(Theme.button("일정 공유",false,()->share(false)));
         storage.add(Theme.button("일정 가져오기",false,()->share(true)));
@@ -153,8 +165,26 @@ public final class MainFrame extends JFrame {
         }
         actions.add(workspaceButton);
         updateViewButtons();
+        header.add(timeTools,BorderLayout.WEST);
         header.add(actions, BorderLayout.EAST);
         return header;
+    }
+
+    private void checkReminders() {
+        java.util.List<DeadlineReminderService.Reminder> due=new java.util.ArrayList<>();
+        reminders.check(model,PlannerTime.today(),due::add);
+        if(!due.isEmpty()) {
+            String summary=String.join(" / ",due.stream().limit(3).map(DeadlineReminderService.Reminder::message).toList());
+            if(due.size()>3)summary+=" 외 "+(due.size()-3)+"개";
+            notifications.show("마감 임박 "+due.size()+"개",summary);
+        }
+        if(!reminders.lastError().isEmpty())notificationStatus.setToolTipText(reminders.lastError());
+    }
+    @Override public void dispose() {
+        if(reminderTimer!=null)reminderTimer.stop();
+        if(timeTools!=null)timeTools.close();
+        if(notifications!=null)notifications.close();
+        super.dispose();
     }
 
     private void toggleWorkspace() {
@@ -269,6 +299,7 @@ public final class MainFrame extends JFrame {
         daily.refresh(selectedDate, occurrences, legs);
         updateMapSummary();
         places.refresh();
+        checkReminders();
         revalidate();
         repaint();
     }

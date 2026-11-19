@@ -17,3 +17,7 @@
 /data/.folder-trash/
 /data/folder-cleanup.log
 /data/course-links-*.tmp
+
+# Local reminder deduplication state
+*.reminders.properties
+deadline-alert-*.tmp
