@@ -116,6 +116,7 @@ public final class PlannerModel {
     private final Set<Cancellation> cancellations = new LinkedHashSet<>();
     private final Map<LocalDate, String> dayNotes = new LinkedHashMap<>();
     private final Map<String, String> buildingNames = new LinkedHashMap<>();
+    private final Map<String, String> buildingNotes = new LinkedHashMap<>();
     private final Map<String, Pin> pins = new LinkedHashMap<>();
     private final Map<String, Deadline> deadlines = new LinkedHashMap<>();
 
@@ -225,6 +226,20 @@ public final class PlannerModel {
 
     public synchronized Map<String, String> buildingNames() {
         return Map.copyOf(buildingNames);
+    }
+
+    public synchronized String buildingNote(String id) {
+        return buildingNotes.getOrDefault(id, "");
+    }
+
+    public synchronized void setBuildingNote(String id, String note) {
+        String key = requiredText(id, "건물 ID");
+        if (note.isBlank()) buildingNotes.remove(key);
+        else buildingNotes.put(key, note);
+    }
+
+    synchronized Map<String, String> buildingNotes() {
+        return Map.copyOf(buildingNotes);
     }
 
     public synchronized List<Pin> pins() {

@@ -1,6 +1,9 @@
 package campus.calendar;
 import campus.model.PlannerModel;
 import campus.ui.Theme;
+import campus.weather.WeatherForecast.Day;
+import campus.weather.WeatherBadge;
+import java.util.Map;
 
 
 import java.awt.*;
@@ -28,6 +31,8 @@ public final class CalendarPanel extends JPanel {
     private final JComboBox<Semester.Season> season = new JComboBox<>(Semester.Season.values());
     private final JPanel days = new JPanel(new GridLayout(0, 7, 3, 3));
     private final JLabel holidayRange = Theme.label(" ", 11, Theme.MUTED);
+    private final JLabel weatherStatus = Theme.label(" ", 11, Theme.MUTED);
+    private Map<LocalDate, Day> weather = Map.of();
     private LocalDate selectedDate = PlannerTime.today();
     private Semester selectedSemester = Semester.forDate(selectedDate);
     private boolean refreshing;
@@ -135,7 +140,20 @@ public final class CalendarPanel extends JPanel {
         holidayRange.setToolTipText("확인된 공휴일만 표시하며, 공휴일이라고 일정을 자동으로 휴강 처리하지 않습니다.");
         bottom.add(holidayRange, BorderLayout.WEST);
         bottom.add(Theme.label("날짜 더블클릭 또는 Enter로 할일 추가",11,Theme.MUTED),BorderLayout.EAST);
-        add(bottom, BorderLayout.SOUTH);
+        JPanel footer = Theme.transparent(new BorderLayout(0, 3));
+        footer.add(bottom, BorderLayout.NORTH);
+        footer.add(weatherStatus, BorderLayout.SOUTH);
+        weatherStatus.setVisible(false);
+        add(footer, BorderLayout.SOUTH);
+    }
+
+    public void showWeather(Map<LocalDate, Day> forecast, String status) {
+        weatherStatus.setText(status);
+        weatherStatus.setVisible(true);
+        if (!weather.equals(forecast)) {
+            weather = forecast;
+            refresh(selectedDate, selectedSemester);
+        }
     }
 
     public void refresh(LocalDate date) { refresh(date, Semester.forDate(date)); }
@@ -155,7 +173,7 @@ public final class CalendarPanel extends JPanel {
             refreshing = false;
         }
         YearMonth displayMonth = YearMonth.from(date);
-        holidayRange.setText(KoreaHolidays.supports(date.getYear()) ? "공휴일 자료: 2025~2027년"
+        holidayRange.setText(KoreaHolidays.supports(date.getYear()) ? "공휴일: 기본 목록 (2025~2027)"
                 : date.getYear() + "년 공휴일 자료 없음");
         LocalDate first = displayMonth.atDay(1).with(TemporalAdjusters.previousOrSame(DayOfWeek.SUNDAY));
         days.removeAll();
@@ -204,6 +222,7 @@ public final class CalendarPanel extends JPanel {
 
     private JPanel dayCell(LocalDate date, YearMonth month) {
         String holiday = KoreaHolidays.name(date);
+        Day forecast = weather.get(date);
         JPanel cell = new JPanel(new BorderLayout(0, 2));
         cell.setBackground(date.equals(selectedDate) ? new Color(216, 231, 255)
                 : !YearMonth.from(date).equals(month) ? new Color(237, 241, 246)
@@ -262,6 +281,7 @@ public final class CalendarPanel extends JPanel {
         }
         StringBuilder detail = new StringBuilder("<html>").append(date);
         if (!holiday.isBlank()) detail.append("<br>").append(Theme.html(holiday));
+        if (forecast != null) detail.append("<br>").append(forecast.description());
         for (PlannerModel.Occurrence occurrence : canceled) {
             detail.append("<br>").append(occurrence.event().category() == PlannerModel.Category.CLASS ? "휴강 · " : "제외 · ")
                     .append(Theme.html(occurrence.event().title()));
@@ -308,6 +328,14 @@ public final class CalendarPanel extends JPanel {
         };
         for (JComponent area : List.of(cell, day, dateRow, topAligned, assignments)) area.addMouseListener(select);
         for (Component item : assignments.getComponents()) if (item instanceof JLabel) item.addMouseListener(select);
+        if (forecast != null) {
+            JLabel badge = Theme.label("", 11, Theme.INK);
+            badge.setIcon(new WeatherBadge(forecast, badge.getFontMetrics(badge.getFont())));
+            badge.getAccessibleContext().setAccessibleName(forecast.description());
+            badge.setToolTipText(tooltip);
+            badge.addMouseListener(select);
+            cell.add(badge, BorderLayout.SOUTH);
+        }
         return cell;
     }
 

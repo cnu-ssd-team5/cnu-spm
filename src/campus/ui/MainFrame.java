@@ -8,6 +8,8 @@ import java.time.*;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.concurrent.ExecutionException;
 import javax.swing.*;
 import campus.map.CampusMap;
 import campus.map.CampusMap.Building;
@@ -25,6 +27,7 @@ import campus.places.PlaceService;
 import campus.sharing.ScheduleSharing;
 import campus.timetable.TimetablePanel;
 import campus.materials.CourseMaterialsPanel;
+import campus.weather.WeatherForecast;
 
 /** 메인 창. 화면 배치와 선택한 날짜·건물을 관리하고, 변경이 생기면 저장합니다. */
 public final class MainFrame extends JFrame {
@@ -64,6 +67,9 @@ public final class MainFrame extends JFrame {
     private final TimeToolsPanel timeTools;
     private boolean workspaceExpanded;
     private final JButton workspaceButton=Theme.button("중앙 확대",false,this::toggleWorkspace);
+    private final javax.swing.Timer weatherTimer = new javax.swing.Timer(3_600_000, e -> refreshWeather());
+    private SwingWorker<Map<LocalDate, WeatherForecast.Day>, Void> weatherRequest;
+    private Map<LocalDate, WeatherForecast.Day> forecast = Map.of();
 
     public MainFrame(CampusMap data, RouteService routes, PlannerModel model, Path statePath) throws IOException {
         super("CNU 캠퍼스 플래너 · 전남대학교 광주캠퍼스");
@@ -100,11 +106,15 @@ public final class MainFrame extends JFrame {
         noteTimer.setRepeats(false);
         notifications=new NotificationCenter(notificationStatus);
         reminders=new DeadlineReminderService(statePath.toAbsolutePath().resolveSibling(statePath.getFileName()+".reminders.properties"));
-        timeTools=new TimeToolsPanel(message->notifications.show("타이머",message));
+        timeTools=new TimeToolsPanel(model, message -> notifications.show("타이머", message));
         reminderTimer=new javax.swing.Timer(60000,e->checkReminders());
         reminderTimer.start();
         setDefaultCloseOperation(DO_NOTHING_ON_CLOSE);
         addWindowListener(new WindowAdapter() {
+            @Override public void windowOpened(WindowEvent e) {
+                refreshWeather();
+                weatherTimer.start();
+            }
             @Override public void windowActivated(WindowEvent e) {if(!folders.isBusy())folders.refreshRecent();}
             @Override public void windowClosing(WindowEvent e) {
                 if(folders.isBusy()) { JOptionPane.showMessageDialog(MainFrame.this,"파일 작업이 끝난 뒤 닫아 주세요.");return; }
@@ -181,10 +191,42 @@ public final class MainFrame extends JFrame {
         if(!reminders.lastError().isEmpty())notificationStatus.setToolTipText(reminders.lastError());
     }
     @Override public void dispose() {
+        weatherTimer.stop();
+        if (weatherRequest != null) weatherRequest.cancel(true);
         if(reminderTimer!=null)reminderTimer.stop();
         if(timeTools!=null)timeTools.close();
         if(notifications!=null)notifications.close();
         super.dispose();
+    }
+
+    private void refreshWeather() {
+        if (weatherRequest != null) return;
+        double latitude = (data.minLat() + data.maxLat()) / 2;
+        double longitude = (data.minLon() + data.maxLon()) / 2;
+        calendar.showWeather(forecast, "광주 예보 · Open-Meteo 조회 중…");
+        weatherRequest = new SwingWorker<>() {
+            @Override protected Map<LocalDate, WeatherForecast.Day> doInBackground() throws IOException {
+                return WeatherForecast.fetch(latitude, longitude);
+            }
+
+            @Override protected void done() {
+                weatherRequest = null;
+                if (isCancelled() || !isDisplayable()) return;
+                String status;
+                try {
+                    forecast = get();
+                    status = "광주 예보 · Open-Meteo · " + PlannerTime.now().format(CLOCK) + " 갱신";
+                } catch (InterruptedException ex) {
+                    Thread.currentThread().interrupt();
+                    return;
+                } catch (ExecutionException ex) {
+                    status = forecast.isEmpty() ? "광주 예보 · 조회 실패" : "광주 예보 · 이전 자료 표시 중";
+                }
+                calendar.showWeather(forecast, status);
+                week.showWeather(selectedDate, forecast);
+            }
+        };
+        weatherRequest.execute();
     }
 
     private void toggleWorkspace() {
@@ -243,6 +285,35 @@ public final class MainFrame extends JFrame {
         try {placeService.rename(building.id(),name);selectBuilding(data.building(building.id()));saveChanged();}
         catch(IOException|IllegalArgumentException ex){JOptionPane.showMessageDialog(this,ex.getMessage());}
     }
+
+    JMenuItem buildingNoteItem(Building building) {
+        if (building.outline().size() < 3) return null;
+        String title = model.buildingNote(building.id()).isBlank() ? "메모 추가" : "메모 보기·수정";
+        JMenuItem item = new JMenuItem(title);
+        item.setEnabled(!folders.isBusy());
+        item.addActionListener(e -> editBuildingNote(building, title));
+        return item;
+    }
+
+    private void editBuildingNote(Building building, String title) {
+        if (folders.isBusy()) return;
+        String previous = model.buildingNote(building.id());
+        JTextArea editor = new JTextArea(previous, 7, 32);
+        editor.setFont(Theme.font(13, Font.PLAIN));
+        editor.setLineWrap(true);
+        editor.setWrapStyleWord(true);
+        editor.getAccessibleContext().setAccessibleName("건물 메모");
+        JPanel form = Theme.transparent(new BorderLayout(0, 8));
+        form.add(Theme.heading(building.name(), 14), BorderLayout.NORTH);
+        form.add(new JScrollPane(editor), BorderLayout.CENTER);
+        Object[] buttons = {"저장", "취소"};
+        int choice = JOptionPane.showOptionDialog(this, form, title, JOptionPane.OK_CANCEL_OPTION,
+                JOptionPane.PLAIN_MESSAGE, null, buttons, buttons[0]);
+        String note = editor.getText().strip();
+        if (choice != 0 || note.equals(previous)) return;
+        model.setBuildingNote(building.id(), note);
+        saveChanged();
+    }
     private void deletePin(Building building) {
         if(folders.isBusy())return;
         if(JOptionPane.showConfirmDialog(this,"핀과 연결된 일정을 삭제할까요? 자료 파일은 보관됩니다.","핀 삭제",JOptionPane.YES_NO_OPTION)!=JOptionPane.YES_OPTION)return;
@@ -290,6 +361,7 @@ public final class MainFrame extends JFrame {
     }
 
     private void refresh() {
+        timeTools.refreshSchedule(selectedDate);
         week.refresh(selectedDate);
         Semester semester=Semester.forDate(selectedDate);
         timetable.refresh(selectedDate);calendar.refresh(selectedDate,semester);materials.refresh(semester);
@@ -350,6 +422,8 @@ public final class MainFrame extends JFrame {
         menu.add(create);
         JMenuItem add=new JMenuItem("일정 추가");add.addActionListener(e->{selectBuilding(building);edit(null,false);});menu.add(add);
         JMenuItem rename=new JMenuItem("이름 변경");rename.addActionListener(e->renamePlace(building));menu.add(rename);
+        JMenuItem note = buildingNoteItem(building);
+        if (note != null) menu.add(note);
         if(building.id().startsWith("pin:")) {JMenuItem delete=new JMenuItem("핀 삭제");delete.addActionListener(e->deletePin(building));menu.add(delete);}
         return menu;
     }

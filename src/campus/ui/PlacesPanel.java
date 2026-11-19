@@ -1,6 +1,8 @@
 package campus.ui;
 
 import java.awt.*;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 import java.util.Comparator;
 import java.util.Locale;
 import java.util.Objects;
@@ -40,11 +42,11 @@ final class PlacesPanel {
         c.insets = new Insets(0,0,12,0);
         top.add(Theme.heading("캠퍼스 장소", 17),c);
         Theme.field(search);
-        search.setToolTipText("건물·정류장·핀 검색");
-        search.putClientProperty("JTextField.placeholderText", "건물·정류장·핀 검색");
+        search.setToolTipText("장소 이름 또는 건물 메모");
+        search.putClientProperty("JTextField.placeholderText", "장소·메모 검색");
         c.gridy++;
         c.insets = new Insets(0,0,7,0);
-        top.add(Theme.label("건물·정류장·핀 검색",11,Theme.MUTED),c);
+        top.add(Theme.label("장소·메모 검색",11,Theme.MUTED),c);
         c.gridy++;
         top.add(search,c);
         favoritesOnly.setFont(Theme.font(12,Font.PLAIN));
@@ -74,6 +76,22 @@ final class PlacesPanel {
         });
         buildings.addListSelectionListener(e -> {
             if (!e.getValueIsAdjusting() && !refreshing && buildings.getSelectedValue()!=null) frame.selectBuilding(buildings.getSelectedValue());
+        });
+        buildings.addMouseListener(new MouseAdapter() {
+            @Override public void mousePressed(MouseEvent e) { showNoteMenu(e); }
+            @Override public void mouseReleased(MouseEvent e) { showNoteMenu(e); }
+
+            private void showNoteMenu(MouseEvent e) {
+                if (!e.isPopupTrigger()) return;
+                int row = buildings.locationToIndex(e.getPoint());
+                if (row < 0 || !buildings.getCellBounds(row, row).contains(e.getPoint())) return;
+                JMenuItem note = frame.buildingNoteItem(buildingItems.get(row));
+                if (note == null) return;
+                buildings.setSelectedIndex(row);
+                JPopupMenu menu = new JPopupMenu();
+                menu.add(note);
+                menu.show(buildings, e.getX(), e.getY());
+            }
         });
         panel.add(Theme.scroll(buildings),BorderLayout.CENTER);
         JPanel bottom = Theme.transparent(new GridBagLayout());
@@ -125,8 +143,7 @@ final class PlacesPanel {
         String query=search.getText().strip().toLowerCase(Locale.ROOT);
         buildingItems.clear();
         data.buildings().stream()
-                .filter(b -> !b.name().replace(" ","").startsWith("이름없는"))
-                .filter(b -> b.name().toLowerCase(Locale.ROOT).contains(query))
+                .filter(b -> matchesSearch(b, query))
                 .filter(b -> !favoritesOnly.isSelected() || model.isFavorite(b.id()))
                 .sorted(Comparator.comparing((Building b) -> !model.isFavorite(b.id()))
                         .thenComparing(b -> b.name().replace(" ","").startsWith("이름없는"))
@@ -135,5 +152,12 @@ final class PlacesPanel {
         if(frame.selectedBuilding()!=null)buildings.setSelectedValue(frame.selectedBuilding(),true);
         buildingCount.setText(buildingItems.size()+"개 장소 · 즐겨찾기 "+model.favorites().size()+"개");
         refreshing=old;
+    }
+
+    private boolean matchesSearch(Building building, String query) {
+        if (!query.isEmpty() && model.buildingNote(building.id()).toLowerCase(Locale.ROOT).contains(query))
+            return true;
+        return !building.name().replace(" ", "").startsWith("이름없는")
+                && building.name().toLowerCase(Locale.ROOT).contains(query);
     }
 }

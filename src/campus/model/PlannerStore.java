@@ -102,6 +102,12 @@ public final class PlannerStore {
                 if (!namedBuildingIds.add(id)) throw new IOException("중복된 건물 이름 ID가 있습니다: " + id);
                 model.renameBuilding(id, requiredAttribute(element, "name"));
             }
+            Set<String> notedBuildingIds = new HashSet<>();
+            for (Element element : entries(root, "building-notes", "building")) {
+                String id = requiredAttribute(element, "id");
+                if (!notedBuildingIds.add(id)) throw new IOException("중복된 건물 메모 ID가 있습니다: " + id);
+                model.setBuildingNote(id, element.getTextContent());
+            }
             Set<String> pinIds = new HashSet<>();
             for (Element element : entries(root, "pins", "pin")) {
                 String id = requiredAttribute(element, "id");
@@ -130,6 +136,14 @@ public final class PlannerStore {
     }
 
     public static void save(Path path, PlannerModel model) throws IOException {
+        save(path, model, true);
+    }
+
+    public static void saveSharedSchedule(Path path, PlannerModel model) throws IOException {
+        save(path, model, false);
+    }
+
+    private static void save(Path path, PlannerModel model, boolean includeBuildingNotes) throws IOException {
         Document document;
         try {
             document = newBuilder().newDocument();
@@ -185,6 +199,15 @@ public final class PlannerStore {
                         element.setAttribute("id", entry.getKey());
                         element.setAttribute("name", entry.getValue());
                     });
+            if (includeBuildingNotes && !model.buildingNotes().isEmpty()) {
+                Element buildingNotes = append(document, root, "building-notes");
+                model.buildingNotes().entrySet().stream().sorted(java.util.Map.Entry.comparingByKey())
+                        .forEach(entry -> {
+                            Element element = append(document, buildingNotes, "building");
+                            element.setAttribute("id", entry.getKey());
+                            element.setTextContent(entry.getValue());
+                        });
+            }
             Element pins = append(document, root, "pins");
             for (PlannerModel.Pin pin : model.pins()) {
                 Element element = append(document, pins, "pin");
