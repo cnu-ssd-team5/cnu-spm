@@ -56,6 +56,8 @@ public final class MainFrame extends JFrame {
     private final JLabel saveStatus = Theme.label("기기에 자동 저장", 11, Theme.MUTED);
     private final javax.swing.Timer noteTimer;
     private boolean unsaved;
+    private boolean workspaceExpanded;
+    private final JButton workspaceButton=Theme.button("중앙 확대",false,this::toggleWorkspace);
 
     public MainFrame(CampusMap data, RouteService routes, PlannerModel model, Path statePath) throws IOException {
         super("CNU 캠퍼스 플래너 · 전남대학교 광주캠퍼스");
@@ -92,6 +94,7 @@ public final class MainFrame extends JFrame {
         noteTimer.setRepeats(false);
         setDefaultCloseOperation(DO_NOTHING_ON_CLOSE);
         addWindowListener(new WindowAdapter() {
+            @Override public void windowActivated(WindowEvent e) {if(!folders.isBusy())folders.refreshRecent();}
             @Override public void windowClosing(WindowEvent e) {
                 if(folders.isBusy()) { JOptionPane.showMessageDialog(MainFrame.this,"파일 작업이 끝난 뒤 닫아 주세요.");return; }
                 noteTimer.stop();
@@ -148,9 +151,21 @@ public final class MainFrame extends JFrame {
         for(String view:List.of("지도","주간시간표","달력","과목자료")) {
             JButton button=Theme.button(view,false,()->showView(view));viewButtons.put(view,button);actions.add(button);
         }
+        actions.add(workspaceButton);
         updateViewButtons();
         header.add(actions, BorderLayout.EAST);
         return header;
+    }
+
+    private void toggleWorkspace() {
+        if(folders.isBusy())return;
+        folders.closePopup();
+        workspaceExpanded=!workspaceExpanded;
+        places.panel.setVisible(!workspaceExpanded);
+        daily.panel.setVisible(!workspaceExpanded);
+        week.panel.setVisible(!workspaceExpanded);
+        workspaceButton.setText(workspaceExpanded?"원래 크기":"중앙 확대");
+        revalidate();repaint();
     }
 
     private JPanel viewCard(JComponent content) {

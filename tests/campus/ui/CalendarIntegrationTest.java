@@ -159,7 +159,7 @@ public final class CalendarIntegrationTest {
                 onEdt(()->{
                     FolderModule folders=new FolderModule(f.temp.resolve("data"),map,f.model);module.set(folders);folders.syncSchedules();
                     CourseMaterialsPanel panel=new CourseMaterialsPanel(f.model,map,folders);panel.refresh(FALL);
-                    JPanel courses=(JPanel)field(panel,"courses");JButton card=(JButton)courses.getComponent(0);
+                    JPanel courses=(JPanel)field(panel,"courses");JButton card=ScheduleEntryWhiteBoxTest.components(courses,JButton.class).stream().filter(button->button.getText()!=null&&button.getText().startsWith("<html>")).findFirst().orElseThrow();
                     ok(card.getTransferHandler().importData(new TransferHandler.TransferSupport(card,fileTransfer(List.of(incoming.toFile())))),"drop rejected");
                 });
                 long deadline=System.nanoTime()+10_000_000_000L;

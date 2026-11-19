@@ -49,6 +49,7 @@ public final class FolderModule implements AutoCloseable {
             FolderService service = new FolderService(dataDirectory.resolve("buildings"));
             catalog.migrate(service);
             controller = new BuildingFolderController(service, catalog);
+            controller.setFolderChanged(this::refreshRecent);
         } catch (IOException | RuntimeException e) { lock.release(); channel.close(); throw e; }
     }
 
@@ -128,6 +129,16 @@ public final class FolderModule implements AutoCloseable {
         } catch(IOException ex) { JOptionPane.showMessageDialog(anchor,ex.getMessage(),"과목 자료",JOptionPane.ERROR_MESSAGE); }
     }
 
+    public Path courseDirectory(PlannerModel.Event event) throws IOException {
+        if(closed||map.building(event.buildingId())==null)throw new IOException("과목 장소를 찾을 수 없습니다.");
+        return catalog.prepareCourse(new FolderService(buildingsRoot),event);
+    }
+    public void openCourseDirectory(Component owner,PlannerModel.Event event) {
+        if(isBusy()||closed)return;
+        try { FolderService.openDirectory(courseDirectory(event)); }
+        catch(IOException ex){JOptionPane.showMessageDialog(owner,ex.getMessage(),"원본 폴더 열기",JOptionPane.ERROR_MESSAGE);}
+    }
+
     public void openOccurrence(JComponent anchor,PlannerModel.Occurrence occurrence) {
         if(occurrence.event().category()==PlannerModel.Category.CLASS)openCourse(anchor,occurrence.event());
         else {
@@ -155,6 +166,7 @@ public final class FolderModule implements AutoCloseable {
             Path path=service.checked(buildingsRoot.resolve(key(building)));
             Files.createDirectories(path);
             catalog.prepare(service,key(building));
+            refreshRecent();
         } catch(IOException ex) {
             JOptionPane.showMessageDialog(owner,ex.getMessage(),"폴더 생성 실패",JOptionPane.ERROR_MESSAGE);
         }
@@ -180,12 +192,18 @@ public final class FolderModule implements AutoCloseable {
         JButton button = new JButton();
         button.setPreferredSize(new Dimension(32, 32));
         button.getAccessibleContext().setAccessibleName(building.name() + " 최근 파일");
-        button.addActionListener(e -> controller.openLatest(SwingUtilities.getWindowAncestor(button), id));
+        button.addActionListener(e -> {
+            if(controller.latest(id)!=null)controller.openLatest(SwingUtilities.getWindowAncestor(button), id);
+            else openAt(button,new Point(button.getWidth(),0),building);
+        });
         Runnable update = () -> {
             Path file = controller.latest(id);
-            button.setVisible(file != null);
-            button.setToolTipText(file == null ? null : file.getFileName().toString());
-            button.setIcon(file == null ? null : new DocumentIcon(FolderService.extension(file).toUpperCase(java.util.Locale.ROOT), false, 24));
+            boolean folder=Files.isDirectory(buildingsRoot.resolve(id),LinkOption.NOFOLLOW_LINKS);
+            button.setVisible(file!=null||folder);
+            button.setToolTipText(file!=null?"최근 파일: "+file.getFileName():folder?building.name()+" 자료함 열기":null);
+            button.setIcon(file!=null?new DocumentIcon(FolderService.extension(file).toUpperCase(java.util.Locale.ROOT),false,24)
+                    :folder?new DocumentIcon("",true,24):null);
+            button.getAccessibleContext().setAccessibleName(building.name()+(file!=null?" 최근 파일":" 자료함"));
         };
         button.putClientProperty("recent.update",update);
         updates.add(update);

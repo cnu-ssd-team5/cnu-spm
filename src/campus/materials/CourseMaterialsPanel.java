@@ -34,15 +34,22 @@ public final class CourseMaterialsPanel extends JPanel {
             JButton card=Theme.button("<html>"+Theme.html(event.title())+"<br><small>"+
                     Theme.html(building==null?"장소 없음":building.name())+"</small></html>",false,()->{});
             card.setPreferredSize(new Dimension(180,85));
-            card.setTransferHandler(new CourseFileTransferHandler(()->!folders.isBusy(),
-                    files->folders.moveIntoCourse(card,event,files)));
+            TransferHandler drop=new CourseFileTransferHandler(()->building!=null&&!folders.isBusy(),
+                    files->folders.moveIntoCourse(card,event,files));
+            card.setTransferHandler(drop);
             card.setToolTipText("더블클릭하여 자료함 열기 · 파일을 끌어 놓으면 이 학기 과목 폴더로 이동");
             card.addMouseListener(new MouseAdapter(){public void mouseClicked(MouseEvent e){
                 if(SwingUtilities.isLeftMouseButton(e)&&e.getClickCount()==2)folders.openCourse(card,event);
             }});
             card.getInputMap().put(KeyStroke.getKeyStroke("ENTER"),"openCourse");
             card.getActionMap().put("openCourse",new AbstractAction(){public void actionPerformed(ActionEvent e){folders.openCourse(card,event);}});
-            courses.add(card);
+            JPanel tile=Theme.transparent(new BorderLayout(0,5));
+            tile.add(card,BorderLayout.CENTER);
+            JButton openDirectory=Theme.button("원본 디렉터리 열기",false,()->folders.openCourseDirectory(card,event));
+            openDirectory.setEnabled(building!=null);
+            openDirectory.setTransferHandler(drop);tile.setTransferHandler(drop);
+            tile.add(openDirectory,BorderLayout.SOUTH);
+            courses.add(tile);
         }
         if(courses.getComponentCount()==0)courses.add(Theme.label("이 학기에 등록된 수업이 없습니다.",13,Theme.MUTED));
         revalidate();repaint();

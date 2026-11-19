@@ -341,7 +341,8 @@ public final class MiniFolderPopup extends JDialog {
         });
         m.add(i);
     }
-    private void menu(MouseEvent e) {
+    private void menu(MouseEvent e) { contextMenu().show(list,e.getX(),e.getY()); }
+    private JPopupMenu contextMenu() {
         JPopupMenu m=new JPopupMenu();
         if(!list.isSelectionEmpty()) {
             item(m,"열기",this::open);
@@ -355,7 +356,12 @@ public final class MiniFolderPopup extends JDialog {
         item(m,"실행 취소 · Ctrl+Z",()->run(()->operations.undo()));
         item(m,list.isSelectionEmpty()?"새 폴더":"선택 항목을 새 폴더에 담기",()->create(false));
         item(m,"새 메모",()->create(true));
+        m.addSeparator();
+        item(m,"원본 폴더 열기",()->{
+            try { FolderService.openDirectory(service.checked(current)); }
+            catch(Exception error) { error(error); }
+        });
 
-        m.show(list,e.getX(),e.getY());
+        return m;
     }
 }
