@@ -119,6 +119,25 @@ final class WeekGrid extends JPanel {
         cancelSelection();
         setPreferredSize(new Dimension(480,TOP+(last-first)*HOUR+12)); revalidate(); repaint();
     }
+    static List<String> wrap(FontMetrics fm,String value,int width,int maxLines) {
+        List<String> lines=new ArrayList<>(); String rest=value.strip();
+        while(!rest.isEmpty()&&lines.size()<maxLines) {
+            if(lines.size()==maxLines-1||fm.stringWidth(rest)<=width) { lines.add(fit(fm,rest,width)); break; }
+            int end=1; while(end<rest.length()&&fm.stringWidth(rest.substring(0,end+1))<=width)end++;
+            int space=rest.lastIndexOf(' ',end);
+            if(rest.charAt(end)!=' '&&space>0)end=space; // 가능하면 띄어쓰기에서 줄을 나눈다.
+            lines.add(rest.substring(0,end).strip()); rest=rest.substring(end).strip();
+        }
+        return lines;
+    }
+    static String fit(FontMetrics fm,String value,int width) {
+        if(fm.stringWidth(value)<=width)return value;
+        for(int end=value.length()-1;end>0;end--) {
+            String cut=value.substring(0,end).strip()+"…";
+            if(fm.stringWidth(cut)<=width)return cut;
+        }
+        return "…";
+    }
     private int columnWidth() { return Math.max(1,(getWidth()-LEFT)/7); }
     private int y(LocalTime time) { return TOP+((time.equals(LocalTime.MAX)?1440:time.toSecondOfDay()/60)-first*60)*HOUR/60; }
     @Override public String getToolTipText(MouseEvent e) {
@@ -168,10 +187,15 @@ final class WeekGrid extends JPanel {
                 }
                 Graphics2D text=(Graphics2D)g.create(); text.clip(r);
                 text.setColor(occurrence.canceled()?Color.GRAY:new Color(40,50,70));
-                text.drawString((occurrence.canceled()?"[제외] ":"")+e.title(),r.x+5,r.y+16);
-                if(r.height>34)text.drawString(TimePicker.display(e.start())+"–"+TimePicker.display(e.end()),r.x+5,r.y+32);
-                var b=map.building(e.buildingId()); if(r.height>50&&b!=null)text.drawString(b.name(),r.x+5,r.y+48);
-                if(r.height>66)text.drawString(e.recurring()?"매주 반복":"이 날짜만",r.x+5,r.y+64);
+                // 제목은 칸 너비에 맞춰 줄바꿈하고, 시간 한 줄은 남겨 둔다. 넘치는 줄은 …로 줄인다.
+                FontMetrics fm=text.getFontMetrics(); int textWidth=r.width-8, rows=Math.max(1,(r.height-3)/16);
+                var b=map.building(e.buildingId());
+                List<String> details=new ArrayList<>(List.of(TimePicker.display(e.start())+"–"+TimePicker.display(e.end())));
+                if(b!=null)details.add(b.name());
+                details.add(e.recurring()?"매주 반복":"이 날짜만");
+                List<String> lines=wrap(fm,(occurrence.canceled()?"[제외] ":"")+e.title(),textWidth,rows>1?rows-1:1);
+                for(String detail:details)if(lines.size()<rows)lines.add(fit(fm,detail,textWidth));
+                for(int i=0;i<lines.size();i++)text.drawString(lines.get(i),r.x+5,r.y+16+i*16);
                 text.dispose();
             }
         }

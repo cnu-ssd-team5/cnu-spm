@@ -76,6 +76,7 @@ public class CalendarDragTest {
  test("drag-on-existing-event-does-not-create",()->{opened.clear();drag(grid,200,y(9)+25,y(11));ok(opened.isEmpty(),"event drag created");});
  test("canceled-event-render",()->{empty.toggleCancellation(empty.events().get(0).id(),monday);paint(grid);});
  test("next-week-hides-one-off",()->{s.weekOf(monday.plusWeeks(1));grid.refresh();paint(grid);ok(s.visibleEvents().isEmpty(),"leak");});
+ test("long-title-wraps-within-box",()->{var fm=new BufferedImage(1,1,BufferedImage.TYPE_INT_RGB).createGraphics().getFontMetrics(new Font(Font.DIALOG,Font.PLAIN,12));var lines=WeekGrid.wrap(fm,"소프트웨어시스템설계 팀 프로젝트 회의",90,2);ok(lines.size()==2&&lines.get(1).endsWith("…")&&lines.stream().allMatch(l->fm.stringWidth(l)<=90),"long title not wrapped "+lines);ok(WeekGrid.wrap(fm,"짧은 제목",90,3).equals(List.of("짧은 제목")),"short title changed");ok(WeekGrid.fit(fm,"아주아주아주 긴 건물 이름입니다",40).endsWith("…"),"no ellipsis");});
  });
  System.out.println("SUMMARY passed="+passed+" failed="+failed);System.exit(failed==0?0:1);
  }
