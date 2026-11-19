@@ -5,6 +5,7 @@ import campus.calendar.*;
 import campus.model.PlannerModel.Event;
 import campus.model.PlannerModel.Category;
 import java.time.*;
+import java.time.temporal.TemporalAdjusters;
 import java.util.*;
 
 /** 여러 요일을 기존 Event 여러 개로 저장하여 지도·휴강·XML 형식을 유지한다. */
@@ -13,12 +14,15 @@ public final class TimetableService {
     private Semester semester;
     private LocalDate weekStart;
     public void weekOf(LocalDate date) {
-        weekStart = date.with(DayOfWeek.MONDAY);
+        weekStart = sunday(date);
         semester = Semester.forDate(date);
     }
+    /** 상단 주간 날짜와 같이 일요일부터 토요일까지를 한 주로 본다. */
+    public static LocalDate sunday(LocalDate date) {
+        return date.with(TemporalAdjusters.previousOrSame(DayOfWeek.SUNDAY));
+    }
     public LocalDate dateFor(DayOfWeek day) {
-        return (weekStart == null ? PlannerTime.today().with(DayOfWeek.MONDAY) : weekStart)
-                .plusDays(day.getValue() - 1);
+        return (weekStart == null ? sunday(PlannerTime.today()) : weekStart).plusDays(day.getValue() % 7);
     }
     public List<PlannerModel.Occurrence> occurrences(DayOfWeek day) {
         return model.occurrences(dateFor(day));

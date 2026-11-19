@@ -37,10 +37,10 @@ public final class TimetablePanel extends JPanel {
     public void refresh(LocalDate date) {
         selectedDate = date;
         service.weekOf(date);
-        LocalDate monday = date.with(DayOfWeek.MONDAY);
+        LocalDate sunday = TimetableService.sunday(date);
         period.setText("주간 시간표 · " + campus.calendar.Semester.forDate(date) + " · "
-                + monday.getMonthValue() + "/" + monday.getDayOfMonth() + "–"
-                + monday.plusDays(6).getMonthValue() + "/" + monday.plusDays(6).getDayOfMonth());
+                + sunday.getMonthValue() + "/" + sunday.getDayOfMonth() + "–"
+                + sunday.plusDays(6).getMonthValue() + "/" + sunday.plusDays(6).getDayOfMonth());
         grid.refresh();
     }
     /** 우측 날짜 버튼과 지도에서 사용하는 공통 일정 등록창. */
@@ -86,8 +86,8 @@ public final class TimetablePanel extends JPanel {
         query.getDocument().addDocumentListener(new DocumentListener(){public void insertUpdate(DocumentEvent e){filter.run();}public void removeUpdate(DocumentEvent e){filter.run();}public void changedUpdate(DocumentEvent e){filter.run();}});
         JPanel days=Theme.transparent(new FlowLayout(FlowLayout.LEFT,3,0));Map<DayOfWeek,JCheckBox> checks=new EnumMap<>(DayOfWeek.class);
         Set<DayOfWeek> selected=new HashSet<>();if(original==null||!original.recurring())selected.add(day);else service.group(original).forEach(e->selected.add(e.weekday()));
-        String[] labels={"월","화","수","목","금","토","일"};
-        for(DayOfWeek d:DayOfWeek.values()){JCheckBox c=new JCheckBox(labels[d.getValue()-1],selected.contains(d));c.setOpaque(false);c.setFont(Theme.font(13,Font.PLAIN));checks.put(d,c);days.add(c);}
+        String[] labels={"일","월","화","수","목","금","토"};
+        for(int i=0;i<7;i++){DayOfWeek d=DayOfWeek.SUNDAY.plus(i);JCheckBox c=new JCheckBox(labels[i],selected.contains(d));c.setOpaque(false);c.setFont(Theme.font(13,Font.PLAIN));checks.put(d,c);days.add(c);}
         JRadioButton once = new JRadioButton("선택한 날짜만", original != null && !original.recurring());
         JRadioButton repeat = new JRadioButton("매주 반복", original == null || original.recurring());
         once.setOpaque(false); repeat.setOpaque(false);

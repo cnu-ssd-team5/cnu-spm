@@ -88,7 +88,10 @@ final class WeekGrid extends JPanel {
     private boolean inGrid(Point point) {
         return point.x>=LEFT && point.x<LEFT+7*columnWidth() && point.y>=TOP && point.y<y(LocalTime.MAX);
     }
-    private DayOfWeek dayAt(Point point) { return DayOfWeek.of((point.x-LEFT)/columnWidth()+1); }
+    private DayOfWeek dayAt(Point point) { return dayOf((point.x-LEFT)/columnWidth()); }
+    // 열 순서는 일~토. 0번 열이 일요일이다.
+    private static DayOfWeek dayOf(int column) { return DayOfWeek.SUNDAY.plus(column); }
+    private static int columnOf(DayOfWeek day) { return day.getValue()%7; }
     Selection selectionBetween(DayOfWeek day, int fromY, int toY) {
         double a=first*60+(fromY-TOP)*60.0/HOUR;
         double b=first*60+(toY-TOP)*60.0/HOUR;
@@ -129,11 +132,11 @@ final class WeekGrid extends JPanel {
         super.paintComponent(graphics); boxes.clear();
         Graphics2D g=(Graphics2D)graphics.create();
         g.setRenderingHint(RenderingHints.KEY_ANTIALIASING,RenderingHints.VALUE_ANTIALIAS_ON);
-        int width=columnWidth(); String[] labels={"월","화","수","목","금","토","일"};
+        int width=columnWidth(); String[] labels={"일","월","화","수","목","금","토"};
         g.setColor(new Color(245,247,251)); g.fillRect(0,0,getWidth(),TOP);
         g.setColor(new Color(45,55,75));
         for(int d=0;d<7;d++) {
-            LocalDate date=service.dateFor(DayOfWeek.of(d+1));
+            LocalDate date=service.dateFor(dayOf(d));
             String label=labels[d]+" "+date.getMonthValue()+"/"+date.getDayOfMonth();
             g.drawString(label,LEFT+d*width+Math.max(2,(width-g.getFontMetrics().stringWidth(label))/2),24);
         }
@@ -144,8 +147,8 @@ final class WeekGrid extends JPanel {
             g.setColor(new Color(240,242,246)); g.drawLine(LEFT,row+HOUR/2,getWidth(),row+HOUR/2);
         }
         for(int d=0;d<=7;d++) {g.setColor(new Color(225,230,237));g.drawLine(LEFT+d*width,0,LEFT+d*width,getHeight());}
-        for(int d=1;d<=7;d++) {
-            List<Occurrence> occurrences=service.occurrences(DayOfWeek.of(d));
+        for(int d=0;d<7;d++) {
+            List<Occurrence> occurrences=service.occurrences(dayOf(d));
             List<LocalTime> ends=new ArrayList<>(); Map<Occurrence,Integer> lanes=new LinkedHashMap<>();
             for(Occurrence occurrence:occurrences) {
                 Event e=occurrence.event();
@@ -155,7 +158,7 @@ final class WeekGrid extends JPanel {
             int laneWidth=width/Math.max(1,ends.size());
             for(var entry:lanes.entrySet()) {
                 Occurrence occurrence=entry.getKey(); Event e=occurrence.event();
-                Rectangle r=new Rectangle(LEFT+(d-1)*width+entry.getValue()*laneWidth+2,y(e.start())+1,
+                Rectangle r=new Rectangle(LEFT+d*width+entry.getValue()*laneWidth+2,y(e.start())+1,
                         Math.max(4,laneWidth-4),Math.max(8,y(e.end())-y(e.start())-2));
                 boxes.put(r,e);
                 g.setColor(occurrence.canceled()?new Color(232,234,238):Color.getHSBColor(Math.floorMod(e.title().hashCode(),360)/360f,.18f,.97f));
@@ -173,7 +176,7 @@ final class WeekGrid extends JPanel {
             }
         }
         if(selection!=null) {
-            int x=LEFT+(selection.day().getValue()-1)*width+1, top=y(selection.start()), height=Math.max(6,y(selection.end())-top);
+            int x=LEFT+columnOf(selection.day())*width+1, top=y(selection.start()), height=Math.max(6,y(selection.end())-top);
             g.setColor(new Color(40,100,230,55));g.fillRect(x,top,width-2,height);
             g.setColor(new Color(40,100,230));g.drawRect(x,top,width-2,height);
             String label=TimePicker.display(selection.start())+"–"+TimePicker.display(selection.end());
