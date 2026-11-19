@@ -141,7 +141,7 @@ final class MapPanel extends JPanel {
     List<Leg> legs() { return legs; }
     void connectFolders(campus.folder.FolderModule folders) {
         this.folders=folders;
-        folders.attach(this, this::hit, building -> point(building.center()));
+        folders.attach(this, this::hit, this::point);
     }
 
 
