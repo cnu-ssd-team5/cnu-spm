@@ -2,6 +2,7 @@ package campus.map;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.text.Collator;
@@ -38,6 +39,9 @@ public final class CampusMap {
     private record Relation(long id, List<Member> members, Map<String,String> tags) { }
 
     static final String BUNDLED_OSM = "/map/chonnam-campus.osm";
+    static final String DISPLAY_NAMES_FILE = "/map/building-names.csv";
+    /** 학교 공식 명칭 기준으로 정한 지도 표시 이름(OSM ID → 이름). 없는 건물은 OSM 이름을 씁니다. */
+    static final Map<String, String> DISPLAY_NAMES = loadDisplayNames();
     private static final double EARTH_RADIUS = 6_371_008.8;
     final List<Building> buildings = new ArrayList<>();
     final Map<String, List<Long>> buildingRefs = new HashMap<>();
@@ -62,6 +66,24 @@ public final class CampusMap {
             if (input == null) throw new IOException("프로그램에 포함된 지도 데이터를 찾을 수 없습니다: " + BUNDLED_OSM);
             return load(input);
         }
+    }
+
+    private static Map<String, String> loadDisplayNames() {
+        Map<String, String> result = new HashMap<>();
+        try (InputStream input = CampusMap.class.getResourceAsStream(DISPLAY_NAMES_FILE)) {
+            if (input == null) return Map.of();
+            String text = new String(input.readAllBytes(), StandardCharsets.UTF_8);
+            for (String line : text.split("\\R")) {
+                line = line.strip();
+                if (line.isEmpty() || line.startsWith("#")) continue;
+                String[] cells = line.split(",", 3);
+                if (cells.length == 3 && !cells[0].isBlank() && !cells[2].isBlank())
+                    result.put(cells[0].strip(), cells[2].strip());
+            }
+        } catch (IOException ex) {
+            return Map.of();
+        }
+        return Map.copyOf(result);
     }
 
     public static CampusMap load(Path file) throws IOException {
@@ -167,6 +189,12 @@ public final class CampusMap {
         if (!inside(center, boundary) && outline.stream().noneMatch(p -> inside(p, boundary))) return false;
         String title = name(tags);
         if (title.isBlank()) title = "이름없는 건물";
+        String display = DISPLAY_NAMES.get(id);
+        if (display != null) {
+            // 자료함 폴더 이름이 바뀌지 않도록 원래 OSM 이름은 저장 키로 남깁니다.
+            originalNames.put(id, title);
+            title = display;
+        }
         Building building = new Building(id, title, outline, center);
         buildings.add(building);
         byId.put(id, building);
