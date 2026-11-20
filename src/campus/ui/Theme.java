@@ -14,7 +14,6 @@ public final class Theme {
     public static final Color BLUE = new Color(40, 100, 230);
     public static final Color PALE_BLUE = new Color(234, 241, 255);
     public static final Color LINE = new Color(225, 231, 240);
-    public static final Color SELECTED_DAY = new Color(255, 235, 130);
     public static final Color TODAY_TEXT = new Color(196, 54, 54);
     public static final Color WARNING = new Color(172, 80, 33);
 
@@ -67,14 +66,20 @@ public final class Theme {
                 Graphics2D g = (Graphics2D) graphics.create();
                 g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
                 Color custom=(Color)getClientProperty("calendar.fill");
+                boolean deleting = Boolean.TRUE.equals(getClientProperty("delete.action"));
                 Color fill = custom!=null?custom:primary ? BLUE : Color.WHITE;
-                if (getModel().isRollover()) fill = custom!=null?custom.darker():primary ? BLUE.darker() : PALE_BLUE;
+                if (getModel().isRollover() && !deleting) fill = custom!=null?custom.darker():primary ? BLUE.darker() : PALE_BLUE;
                 if (!isEnabled()) fill = LINE;
                 g.setColor(fill);
                 g.fillRoundRect(0, 0, getWidth(), getHeight(), 12, 12);
                 if (!primary) {
-                    g.setColor(isFocusOwner() ? BLUE : LINE);
+                    g.setColor(deleting && (isFocusOwner() || getModel().isRollover()) ? TODAY_TEXT : isFocusOwner() ? BLUE : LINE);
                     g.drawRoundRect(0, 0, getWidth() - 1, getHeight() - 1, 12, 12);
+                }
+                if (Boolean.TRUE.equals(getClientProperty("calendar.selected"))) {
+                    g.setColor(BLUE);
+                    g.setStroke(new BasicStroke(2));
+                    g.drawRoundRect(1, 1, getWidth() - 3, getHeight() - 3, 12, 12);
                 }
                 g.dispose();
                 super.paintComponent(graphics);
@@ -88,6 +93,22 @@ public final class Theme {
         button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         button.addActionListener(e -> action.run());
         return button;
+    }
+
+    public static JButton deleteButton(String text, Runnable action) {
+        JButton button = button(text, false, action);
+        button.putClientProperty("delete.action", true);
+        button.setForeground(TODAY_TEXT);
+        return button;
+    }
+
+    public static JMenuItem deleteMenuItem(String text, Runnable action) {
+        JMenuItem item = new JMenuItem(text);
+        item.setOpaque(true);
+        item.setBackground(Color.WHITE);
+        item.setForeground(TODAY_TEXT);
+        item.addActionListener(e -> action.run());
+        return item;
     }
 
     public static JPanel card(LayoutManager layout) {

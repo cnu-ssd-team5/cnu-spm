@@ -20,15 +20,17 @@ public class WeekBarRegressionTest {
     for(int i=0;i<7;i++){JButton b=(JButton)days.getComponent(i);if(!b.getName().equals(start.plusDays(i).toString()))throw new AssertionError("wrong date");}
     ok(true,"sunday-to-saturday-"+selected);
     JButton chosen=(JButton)days.getComponent((selected.getDayOfWeek().getValue())%7);
-    ok(Theme.SELECTED_DAY.equals(chosen.getClientProperty("calendar.fill")),"selected-yellow-"+selected);
+    ok(Boolean.TRUE.equals(chosen.getClientProperty("calendar.selected")),"selected-outline-"+selected);
    }
    LocalDate today=PlannerTime.today();bar.refresh(today);JPanel days=(JPanel)field(bar,"weekDays");JButton button=(JButton)days.getComponent(today.getDayOfWeek().getValue()%7);
    ok(button.getForeground().equals(Theme.TODAY_TEXT),"today-red");
    ok(button.getClientProperty("calendar.today")==null,"no-old-today-outline");
    button.setSize(140,58);BufferedImage image=new BufferedImage(140,58,BufferedImage.TYPE_INT_RGB);var g=image.createGraphics();button.paint(g);g.dispose();
-   ok(new Color(image.getRGB(12,12)).equals(Theme.SELECTED_DAY),"selected-button-painted-yellow");
+   Color base = (Color) button.getClientProperty("calendar.fill");
+   ok(new Color(image.getRGB(12,12)).equals(base == null ? Color.WHITE : base),"selected-button-keeps-base-fill");
+   ok(new Color(image.getRGB(1,29)).equals(Theme.BLUE),"selected-button-painted-blue-outline");
    LocalDate other=today.plusDays(today.getDayOfWeek()==DayOfWeek.SATURDAY?-1:1);bar.refresh(other);button=(JButton)((JPanel)field(bar,"weekDays")).getComponent(today.getDayOfWeek().getValue()%7);
-   ok(button.getForeground().equals(Theme.TODAY_TEXT)&&!Theme.SELECTED_DAY.equals(button.getClientProperty("calendar.fill")),"unselected-today-red-without-yellow");
+   ok(button.getForeground().equals(Theme.TODAY_TEXT)&&!Boolean.TRUE.equals(button.getClientProperty("calendar.selected")),"unselected-today-red-without-outline");
   }catch(Exception e){throw new RuntimeException(e);}});
   System.out.println("WEEK BAR RESULT: "+passed+" passed");
  }

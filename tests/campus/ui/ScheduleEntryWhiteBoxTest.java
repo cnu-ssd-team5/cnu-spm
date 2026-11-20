@@ -46,11 +46,14 @@ public final class ScheduleEntryWhiteBoxTest {
     static JComboBox<?> category(JDialog dialog) {
         return components(dialog,JComboBox.class).stream().filter(c->c.getItemCount()>0&&c.getItemAt(0) instanceof Category).findFirst().orElseThrow();
     }
-    static JComboBox<?> place(JDialog dialog) {
-        return components(dialog,JComboBox.class).stream().filter(c->{for(int i=0;i<c.getItemCount();i++)if(c.getItemAt(i) instanceof CampusMap.Building)return true;return false;}).findFirst().orElseThrow();
+    static PlacePicker place(JDialog dialog) {
+        return components(dialog,PlacePicker.class).stream().findFirst().orElseThrow();
     }
     static JTextField date(JDialog dialog) {
         return components(dialog,JTextField.class).stream().filter(f->f.getText().matches("[0-9]{4}-[0-9]{2}-[0-9]{2}")).findFirst().orElseThrow();
+    }
+    static JTextField directPlace(JDialog dialog) {
+        return (JTextField) place(dialog).getEditor().getEditorComponent();
     }
     static void dialog(Runnable open,Consumer<JDialog> check) throws Exception {
         AtomicReference<Throwable> failure=new AtomicReference<>();
@@ -107,6 +110,7 @@ public final class ScheduleEntryWhiteBoxTest {
                         ok(date(d).isEnabled(),"date not enabled");d.getRootPane().getDefaultButton().doClick();
                         ok(model.events().size()==1&&!model.events().get(0).recurring(),"once not saved");
                         ok(model.events().get(0).date().equals(DATE),"saved wrong date");
+                        ok(model.events().get(0).buildingId().equals(building.id()),"selected campus ID lost");
                     }));
                     test("no-extra-add-buttons-after-population",()->ok(components(daily.panel,JButton.class).stream().filter(b->b.getText()!=null&&b.getText().contains("일정 추가")).count()==1,"slot buttons remain"));
                     test("existing-one-off-retains-mode-category-date-time",()->dialog(()->timetable.editEvent(model.events().get(0)),d->{
@@ -127,6 +131,69 @@ public final class ScheduleEntryWhiteBoxTest {
                             ok(radio(d,"매주 반복").isSelected()&&category(d).getSelectedItem()==Category.CLASS,"grid defaults differ");
                             List<TimePicker> times=components(d,TimePicker.class);ok(times.get(0).time().equals(LocalTime.of(14,30))&&times.get(1).time().equals(LocalTime.of(16,5)),"drag times lost");
                         });
+                    });
+                    test("custom-appointment-saves-and-reopens-in-daily-editor",()->{
+                        dialog(()->button(daily.panel,"일정 추가").doClick(),d->{
+                            radio(d,"선택한 날짜만").doClick();
+                            components(d,JTextField.class).get(0).setText("화상 상담");
+                            ((JTextField) category(d).getEditor().getEditorComponent()).setText("상담");
+                            directPlace(d).setText("온라인 · 링크는 메모");
+                            List<TimePicker> times=components(d,TimePicker.class);
+                            times.get(0).setTime(LocalTime.of(11,0));times.get(1).setTime(LocalTime.of(12,0));
+                            d.getRootPane().getDefaultButton().doClick();
+                        });
+                        Event external = model.events().stream().filter(e -> e.title().equals("화상 상담")).findFirst().orElseThrow();
+                        ok(external.categoryLabel().equals("상담") && external.category() == Category.OTHER, "custom kind lost");
+                        ok(external.customPlace().equals("온라인 · 링크는 메모") && map.building(external.buildingId()) == null,
+                                "custom place was routed through the selected campus building");
+                        dialog(()->host.edit(external,false),d->{
+                            ok(((JTextField) category(d).getEditor().getEditorComponent()).getText().equals("상담"),"custom kind lost on edit");
+                            ok(directPlace(d).getText().equals(external.customPlace()),"custom place lost on edit");
+                            d.getRootPane().getDefaultButton().doClick();
+                        });
+                        ok(model.events().contains(external),"saving edit changed the custom event");
+                    });
+                    test("custom-repeating-event-roundtrips-through-shared-xml",()->{
+                        dialog(()->button(daily.panel,"일정 추가").doClick(),d->{
+                            components(d,JTextField.class).get(0).setText("학외 회의");
+                            ((JTextField) category(d).getEditor().getEditorComponent()).setText("외부 업무");
+                            directPlace(d).setText("광주광역시청");
+                            List<TimePicker> times=components(d,TimePicker.class);
+                            times.get(0).setTime(LocalTime.of(13,0));times.get(1).setTime(LocalTime.of(14,0));
+                            d.getRootPane().getDefaultButton().doClick();
+                        });
+                        Event repeat = model.events().stream().filter(e -> e.title().equals("학외 회의")).findFirst().orElseThrow();
+                        ok(repeat.recurring() && repeat.categoryLabel().equals("외부 업무")
+                                && repeat.customPlace().equals("광주광역시청"), "custom recurring event lost");
+                        PlannerModel saved = PlannerStore.load(temporary.resolve("data/planner-state.xml"));
+                        ok(saved.events().contains(repeat),"personal XML lost event details");
+                        Path shared = temporary.resolve("share.xml");
+                        PlannerStore.saveSharedSchedule(shared,model);
+                        PlannerModel recipient = new PlannerModel();
+                        recipient.mergeFrom(PlannerStore.load(shared));
+                        recipient.mergeFrom(PlannerStore.load(shared));
+                        ok(recipient.events().containsAll(model.events()) && recipient.events().size() == model.events().size(),
+                                "share changed custom details or duplicated them");
+                    });
+                    test("place-picker-disambiguates-duplicate-selected-buildings", () -> {
+                        CampusMap.Building first = new CampusMap.Building("pin:picker-first","검사 장소",List.of(),building.center());
+                        CampusMap.Building second = new CampusMap.Building("pin:picker-second","검사 장소",List.of(),building.center());
+                        map.putPlace(first);
+                        map.putPlace(second);
+                        try {
+                            JTextField search = new JTextField();
+                            PlacePicker picker = new PlacePicker(map, model, search, first, "");
+                            search.setText("검사 장소");
+                            ok(picker.selection().buildingId().equals(first.id()), "filter lost the selected location");
+                            picker.setSelectedItem(second);
+                            ok(picker.selection().buildingId().equals(second.id()), "identical label lost the selected ID");
+                            ((JTextField) picker.getEditor().getEditorComponent()).setText("교외 실습실");
+                            search.setText("없는 이름");
+                            ok(picker.selection().customPlace().equals("교외 실습실"), "filter erased typed location");
+                        } finally {
+                            map.removePlace(first.id());
+                            map.removePlace(second.id());
+                        }
                     });
                 }catch(Throwable error){fatal.set(error);}
                 finally {if(frame!=null) {try {((campus.folder.FolderModule)field(frame,"folders")).close();}catch(Exception e){fatal.set(e);}frame.dispose();}}

@@ -47,6 +47,87 @@ public final class WorkspaceMaterialsTest {
      test("materials-original-directory-buttons-and-drop-target",()->{CourseMaterialsPanel materials=new CourseMaterialsPanel(model,map,folders);materials.refresh(fall);ok(ScheduleEntryWhiteBoxTest.components(materials,JButton.class).stream().anyMatch(b->"원본 디렉터리 열기".equals(b.getText())&&b.isEnabled()),"directory button missing");ok(ScheduleEntryWhiteBoxTest.components(materials,JButton.class).stream().anyMatch(b->b.getTransferHandler() instanceof CourseFileTransferHandler),"drop missing");});
      test("folder-menu-has-original-folder-action",()->{FolderService service=new FolderService(temp.resolve("data/buildings"));CourseCatalog catalog=new CourseCatalog(map,model);BuildingFolderController controller=new BuildingFolderController(service,catalog);Path path=service.getRoot().resolve(catalog.storageKey(building.id()));Files.createDirectories(path);MiniFolderPopup popup=new MiniFolderPopup(null,controller,service,path,()->{});try{var method=MiniFolderPopup.class.getDeclaredMethod("contextMenu");method.setAccessible(true);JPopupMenu menu=(JPopupMenu)method.invoke(popup);ok(Arrays.stream(menu.getComponents()).anyMatch(c->c instanceof JMenuItem i&&"원본 폴더 열기".equals(i.getText())),"menu missing");}finally{popup.dispose();controller.close();}});
      test("original-folder-rejects-missing-directory",()->{try{FolderService.openDirectory(temp.resolve("missing"));throw new AssertionError("missing accepted");}catch(IOException expected){}});
+     test("arrows-cycle-workspace-with-planner-after-map", () -> {
+      var show=MainFrame.class.getDeclaredMethod("showView",String.class);show.setAccessible(true);show.invoke(host,"지도");
+      JButton next=(JButton)f(host,"nextView"), previous=(JButton)f(host,"previousView");
+      for(String expected:List.of("플래너","주간시간표","달력","과목자료","지도")) {
+       next.doClick(0);ok(expected.equals(f(host,"activeView")),"wrong next page");
+      }
+      previous.doClick(0);ok("과목자료".equals(f(host,"activeView")),"reverse wrap missed materials");
+     });
+     test("calendar-opens-its-date-and-planner-shortcuts-open-today", () -> {
+      LocalDate today=PlannerTime.today(), plannerDay=today.minusDays(9);
+      var tabs=(java.util.Map<?,?>)f(host,"viewButtons");
+      var planner=(JButton)tabs.get("플래너");
+      var calendar=(JButton)tabs.get("달력");
+      host.changeDate(plannerDay);
+      planner.doClick(0);
+      ok(today.equals(f(host,"plannerDate")),"planner tab should open today");
+      calendar.doClick(0);
+      CalendarPanel calendarPanel=(CalendarPanel)f(host,"calendar");
+      var days=(JPanel)f(calendarPanel,"days");
+      Object key=days.getInputMap(JComponent.WHEN_FOCUSED).get(KeyStroke.getKeyStroke("ENTER"));
+      days.getActionMap().get(key).actionPerformed(new java.awt.event.ActionEvent(days,0,""));
+      ok("플래너".equals(f(host,"activeView"))&&plannerDay.equals(f(host,"plannerDate")),"calendar Enter should open its date");
+      host.changeDate(plannerDay.minusDays(1));
+      ok(plannerDay.equals(f(host,"plannerDate")),"browsing another week should not change planner date");
+      var previous=(JButton)f(host,"previousView");
+      var next=(JButton)f(host,"nextView");
+      previous.doClick(0);
+      next.doClick(0);
+      ok(today.equals(f(host,"plannerDate")),"arrows should open today's planner");
+     });
+     test("top-date-click-double-click-and-enter-open-the-right-view", () -> {
+      LocalDate sunday=LocalDate.of(2026,11,15);
+      var tabs=(java.util.Map<?,?>)f(host,"viewButtons");
+      ((JButton)tabs.get("지도")).doClick(0);
+      host.changeDate(sunday);
+      JPanel days=(JPanel)f(f(host,"week"),"weekDays");
+      JButton monday=(JButton)days.getComponent(1);
+      monday.doClick(0);
+      ok("지도".equals(f(host,"activeView"))&&host.selectedDate().equals(sunday.plusDays(1)),
+              "single click outside planner should only select the date");
+      ok(days.getComponent(1)==monday,"refresh replaced the date and broke double-click/focus");
+      monday.dispatchEvent(new java.awt.event.MouseEvent(monday,java.awt.event.MouseEvent.MOUSE_CLICKED,
+              200,0,3,3,2,false,java.awt.event.MouseEvent.BUTTON1));
+      ok("플래너".equals(f(host,"activeView"))&&sunday.plusDays(1).equals(f(host,"plannerDate")),
+              "double-click did not open the date's planner");
+      JButton tuesday=(JButton)days.getComponent(2);
+      tuesday.doClick(0);
+      ok(sunday.plusDays(2).equals(f(host,"plannerDate"))&&host.selectedDate().equals(sunday.plusDays(2)),
+              "single click in planner did not update the planner date");
+      ((JButton)tabs.get("지도")).doClick(0);
+      JButton wednesday=(JButton)days.getComponent(3);
+      Object key=wednesday.getInputMap(JComponent.WHEN_FOCUSED).get(KeyStroke.getKeyStroke("ENTER"));
+      wednesday.getActionMap().get(key).actionPerformed(new java.awt.event.ActionEvent(wednesday,0,""));
+      ok("플래너".equals(f(host,"activeView"))&&sunday.plusDays(3).equals(f(host,"plannerDate"))
+              &&host.selectedDate().equals(sunday.plusDays(3)),"Enter did not select and open the exact date");
+     });
+     test("planner-checklist-keeps-insertion-order-and-dated-notes", () -> {
+      LocalDate date=PlannerTime.today();
+      var openPlanner=MainFrame.class.getDeclaredMethod("openPlanner",LocalDate.class);openPlanner.setAccessible(true);
+      model.putDeadline(new Deadline("daily-low","일반 읽기",date,"",false,null,TaskPriority.LOW,date,false));
+      model.putDeadline(new Deadline("daily-high","먼저 읽기",date,"",false,null,TaskPriority.HIGH,date,false));
+      model.putDeadline(new Deadline("deadline-today","마감 항목",date,"",false));
+      model.putDeadline(new Deadline("daily-future","다른 날짜",date.plusDays(1),"",false));
+      DailyPlannerPanel panel=(DailyPlannerPanel)f(host,"dailyPlanner");
+      openPlanner.invoke(host,date);
+      var tasks=ScheduleEntryWhiteBoxTest.components(panel,JCheckBox.class).stream().filter(b->b.getName()!=null).toList();
+      ok(tasks.stream().map(JCheckBox::getName).toList().equals(List.of("daily-task:daily-low","daily-task:daily-high")),
+              "checklist did not preserve insertion order or date scope");
+      JTextArea memo=(JTextArea)f(panel,"memo");
+      memo.setText("오늘 메모");
+      tasks.get(1).doClick(0);
+      ok(ScheduleEntryWhiteBoxTest.components(panel,JCheckBox.class).get(1).isSelected(),"completion moved the task");
+      openPlanner.invoke(host,date.plusDays(1));
+      ok(memo.getText().isEmpty(),"previous note leaked to next day");
+      openPlanner.invoke(host,date);
+      ok(memo.getText().equals("오늘 메모"),"dated memo not restored");
+      PlannerModel saved=PlannerStore.load(temp.resolve("data/state.xml"));
+      Deadline completed=saved.plannerTasks(date).stream().filter(d->d.id().equals("daily-high")).findFirst().orElseThrow();
+      ok(completed.completed() && completed.priority()==TaskPriority.HIGH && saved.dayNote(date).equals("오늘 메모"),
+              "completion, priority or note did not survive save/reopen");
+     });
     }catch(Exception e){failed++;e.printStackTrace(System.out);}finally{if(frame!=null){try{((FolderModule)f(frame,"folders")).close();}catch(Exception e){failed++;}frame.dispose();MainFrame disposed=frame;test("main-dispose-stops-clock-and-reminder-timers",()->{ok(!((javax.swing.Timer)f(disposed,"reminderTimer")).isRunning(),"reminder timer leaked");Object tools=f(disposed,"timeTools");ok(!((javax.swing.Timer)f(tools,"ticker")).isRunning(),"clock ticker leaked");});}}
    });
    // A separate module exercises the real asynchronous move path without any user data.

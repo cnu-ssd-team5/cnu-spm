@@ -8,8 +8,6 @@ import java.time.format.TextStyle;
 import java.util.*;
 import java.util.List;
 import javax.swing.*;
-import javax.swing.event.DocumentEvent;
-import javax.swing.event.DocumentListener;
 import campus.map.CampusMap;
 import campus.map.CampusMap.Building;
 import campus.model.PlannerModel;
@@ -26,7 +24,7 @@ final class EventDialog extends JDialog {
     private final JTextArea note = new JTextArea(4, 20);
     private final JComboBox<Category> category = new JComboBox<>(Category.values());
     private final JComboBox<DayOfWeek> weekday = new JComboBox<>(DayOfWeek.values());
-    private final JComboBox<Building> building = new JComboBox<>();
+    private final PlacePicker building;
     private final JRadioButton recurring = new JRadioButton("매주 반복");
     private final JRadioButton once = new JRadioButton("이 날짜만");
     private final JLabel error = Theme.label(" ", 12, Theme.WARNING);
@@ -82,11 +80,14 @@ final class EventDialog extends JDialog {
         times.add(start);
         times.add(end);
         row = row(fields, c, row, "시작 / 종료 (시 · 분 선택)", times);
-        row = row(fields, c, row, "일정 종류", category);
+        category.setEditable(true);
+        category.getAccessibleContext().setAccessibleName("일정 종류");
+        row = row(fields, c, row, "일정 종류 · 선택 또는 직접 입력", category);
         JTextField query = new JTextField();
-        query.setToolTipText("건물 이름을 입력한 뒤 아래 목록에서 장소를 선택하세요");
+        Building initial = original == null ? selectedBuilding : map.building(original.buildingId());
+        building = new PlacePicker(map, model, query, initial, original == null ? "" : original.customPlace());
         row = row(fields, c, row, "건물 검색", query);
-        row = row(fields, c, row, "장소 · 즐겨찾기 건물이 먼저 표시됩니다", building);
+        row = row(fields, c, row, "장소 · 선택 또는 직접 입력", building);
         note.setLineWrap(true);
         note.setWrapStyleWord(true);
         JScrollPane memoScroll = new JScrollPane(note);
@@ -96,7 +97,7 @@ final class EventDialog extends JDialog {
         content.add(Theme.scroll(fields), BorderLayout.CENTER);
 
         for (JComponent field : List.of(title, date, query, note)) Theme.field(field);
-        for (JComboBox<?> combo : List.of(weekday, category, building)) {
+        for (JComboBox<?> combo : List.of(weekday, category)) {
             combo.setFont(Theme.font(13, Font.PLAIN));
             combo.setBackground(Color.WHITE);
         }
@@ -105,48 +106,6 @@ final class EventDialog extends JDialog {
                 return super.getListCellRendererComponent(list,
                         value instanceof DayOfWeek day ? "매주 " + day.getDisplayName(TextStyle.FULL, Locale.KOREAN) : "", index, selected, focus);
             }
-        });
-        building.setMaximumRowCount(12);
-        Set<String> duplicateNames = new HashSet<>();
-        Set<String> seenNames = new HashSet<>();
-        for (Building place : map.buildings()) {
-            if (!seenNames.add(place.name())) duplicateNames.add(place.name());
-        }
-        building.setRenderer(new DefaultListCellRenderer() {
-            @Override public Component getListCellRendererComponent(JList<?> list, Object value, int index, boolean selected, boolean focus) {
-                String text = "장소를 선택하세요";
-                if (value instanceof Building b) {
-                    text = (model.isFavorite(b.id()) ? "★ " : "") + b.name();
-                    if (duplicateNames.contains(b.name())) text += " · " + b.id();
-                }
-                return super.getListCellRendererComponent(list, text, index, selected, focus);
-            }
-        });
-        List<Building> choices = map.buildings().stream().sorted(Comparator
-                .comparing((Building b) -> !model.isFavorite(b.id()))
-                .thenComparing(Building::name)).toList();
-        building.addItem(null);
-        choices.forEach(building::addItem);
-        Building initial = original == null ? selectedBuilding : map.building(original.buildingId());
-        building.setSelectedItem(initial);
-        query.getDocument().addDocumentListener(new DocumentListener() {
-            private void update() {
-                Building previous = (Building) building.getSelectedItem();
-                String filter = query.getText().strip().toLowerCase(Locale.ROOT);
-                building.removeAllItems();
-                building.addItem(null);
-                for (Building item : choices) {
-                    if (item.name().toLowerCase(Locale.ROOT).contains(filter)) building.addItem(item);
-                }
-                if (previous != null && previous.name().toLowerCase(Locale.ROOT).contains(filter)) {
-                    building.setSelectedItem(previous);
-                } else if (building.getItemCount() == 2) {
-                    building.setSelectedIndex(1);
-                }
-            }
-            public void insertUpdate(DocumentEvent e) { update(); }
-            public void removeUpdate(DocumentEvent e) { update(); }
-            public void changedUpdate(DocumentEvent e) { update(); }
         });
         date.setText(selectedDate.toString());
         start.setTime(LocalTime.of(9,0));
@@ -162,7 +121,7 @@ final class EventDialog extends JDialog {
             title.setText(original.title());
             start.setTime(original.start());
             end.setTime(original.end());
-            category.setSelectedItem(original.category());
+            category.setSelectedItem(original.customCategory().isEmpty() ? original.category() : original.customCategory());
             recurring.setSelected(original.recurring());
             once.setSelected(!original.recurring());
             if (original.recurring()) weekday.setSelectedItem(original.weekday());
@@ -179,11 +138,10 @@ final class EventDialog extends JDialog {
         south.add(error, BorderLayout.NORTH);
         JPanel buttons = Theme.transparent(new FlowLayout(FlowLayout.RIGHT, 8, 0));
         if (original != null) {
-            JButton remove = Theme.button(original.recurring() ? "고정 일정 전체 삭제" : "일정 삭제", false, () -> {
+            JButton remove = Theme.deleteButton(original.recurring() ? "고정 일정 전체 삭제" : "일정 삭제", () -> {
                 result = new Result(original, true);
                 dispose();
             });
-            remove.setForeground(Theme.WARNING);
             buttons.add(remove);
         }
         buttons.add(Theme.button("취소", false, this::dispose));
@@ -217,17 +175,18 @@ final class EventDialog extends JDialog {
     }
 
     private void save() {
-        Building selected = (Building) building.getSelectedItem();
-        if (selected == null) {
-            error.setText("OSM 건물 목록에서 장소를 선택해 주세요.");
-            return;
-        }
         try {
+            PlacePicker.Selection place = building.selection();
+            String categoryText = ((JTextField) category.getEditor().getEditorComponent()).getText().strip();
+            if (categoryText.isEmpty()) throw new IllegalArgumentException("일정 종류를 선택하거나 직접 입력해 주세요.");
+            Category kind = Category.fromLabel(categoryText);
+            String customCategory = kind.toString().equals(categoryText) ? "" : categoryText;
             Event event = new Event(original == null ? UUID.randomUUID().toString() : original.id(),
-                    title.getText().strip(), selected.id(), start.time(),
-                    end.time(), (Category)category.getSelectedItem(),
+                    title.getText().strip(), place.buildingId(), start.time(),
+                    end.time(), kind,
                     recurring.isSelected() ? (DayOfWeek)weekday.getSelectedItem() : null,
-                    recurring.isSelected() ? null : LocalDate.parse(date.getText().strip()), note.getText());
+                    recurring.isSelected() ? null : LocalDate.parse(date.getText().strip()), note.getText(),
+                    customCategory, place.customPlace());
             PlannerModel validation = new PlannerModel();
             validation.putEvent(event);
             result = new Result(event, false);
@@ -235,7 +194,7 @@ final class EventDialog extends JDialog {
         } catch (DateTimeParseException ex) {
             error.setText("날짜는 2026-11-16 형식으로 입력해 주세요.");
         } catch (IllegalArgumentException ex) {
-            error.setText("이름을 입력하고 종료 시간을 시작 시간보다 늦게 지정해 주세요.");
+            error.setText(ex.getMessage());
         }
     }
 }

@@ -39,8 +39,13 @@ public final class TimetableService {
     }
     public Event prepareOnce(Event original, String title, String building, LocalTime start,
                              LocalTime end, Category category, LocalDate date, String note) {
+        return prepareOnce(original, title, building, start, end, category, date, note, "", "");
+    }
+    public Event prepareOnce(Event original, String title, String building, LocalTime start,
+                             LocalTime end, Category category, LocalDate date, String note,
+                             String customCategory, String customPlace) {
         String id = original != null && !original.recurring() ? original.id() : UUID.randomUUID().toString();
-        return new Event(id, title, building, start, end, category, null, date, note);
+        return new Event(id, title, building, start, end, category, null, date, note, customCategory, customPlace);
     }
     public void semester(Semester value) { semester=value; }
     public TimetableService(PlannerModel model) { this.model=model; }
@@ -56,13 +61,17 @@ public final class TimetableService {
     private static String root(Event e) { return e.id().startsWith("tt:")?e.id().substring(3,e.id().lastIndexOf(':')):e.id(); }
     public List<Event> prepare(Event original,String title,String building,LocalTime start,LocalTime end,
                                Category category,Set<DayOfWeek> days,String note) {
+        return prepare(original, title, building, start, end, category, days, note, "", "");
+    }
+    public List<Event> prepare(Event original,String title,String building,LocalTime start,LocalTime end,
+                               Category category,Set<DayOfWeek> days,String note,String customCategory,String customPlace) {
         if(days.isEmpty())throw new IllegalArgumentException("요일을 하나 이상 선택하세요.");
         List<Event> old=group(original);
         String prefix="tt:"+(original==null?UUID.randomUUID():root(original))+":";
         List<Event> result=new ArrayList<>();
         for(DayOfWeek day:new TreeSet<>(days)) {
             String id=old.stream().filter(e->e.weekday()==day).map(Event::id).findFirst().orElse(prefix+day.name());
-            result.add(new Event(id,title,building,start,end,category,day,null,note));
+            result.add(new Event(id,title,building,start,end,category,day,null,note,customCategory,customPlace));
         }
         return List.copyOf(result);
     }

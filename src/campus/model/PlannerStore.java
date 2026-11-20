@@ -73,7 +73,9 @@ public final class PlannerStore {
                                 : PlannerModel.Category.valueOf(category),
                         weekday.isEmpty() ? null : DayOfWeek.valueOf(weekday),
                         date.isEmpty() ? null : LocalDate.parse(date),
-                        childText(element, "note"));
+                        childText(element, "note"),
+                        element.getAttribute("customCategory"),
+                        element.getAttribute("customPlace"));
                 String semester = element.getAttribute("semester");
                 if (!semester.isEmpty()) model.putEvent(event, Semester.parse(semester));
                 else if (!"3".equals(version)) {
@@ -125,9 +127,18 @@ public final class PlannerStore {
                     throw new IOException("마감 일정 완료 상태가 올바르지 않습니다: " + id);
                 }
                 String completedOn = element.getAttribute("completedOn");
+                String priority = element.getAttribute("priority");
+                LocalDate date = LocalDate.parse(requiredAttribute(element, "date"));
+                String plannerDate = element.getAttribute("plannerDate");
+                String deadlineLinked = element.getAttribute("deadlineLinked");
+                if (!deadlineLinked.isEmpty() && !"true".equals(deadlineLinked) && !"false".equals(deadlineLinked)) {
+                    throw new IOException("마감기한 연동 상태가 올바르지 않습니다: " + id);
+                }
                 model.putDeadline(new PlannerModel.Deadline(id, requiredAttribute(element, "title"),
-                        LocalDate.parse(requiredAttribute(element, "date")), childText(element, "note"),
-                        Boolean.parseBoolean(completed), completedOn.isEmpty() ? null : LocalDate.parse(completedOn)));
+                        date, childText(element, "note"),
+                        Boolean.parseBoolean(completed), completedOn.isEmpty() ? null : LocalDate.parse(completedOn),
+                        priority.isEmpty() ? PlannerModel.TaskPriority.NORMAL : PlannerModel.TaskPriority.valueOf(priority),
+                        plannerDate.isEmpty() ? date : LocalDate.parse(plannerDate), !"false".equals(deadlineLinked)));
             }
             return model;
         } catch (ParserConfigurationException | SAXException | RuntimeException exception) {
@@ -164,6 +175,8 @@ public final class PlannerStore {
                 element.setAttribute("start", event.start().toString());
                 element.setAttribute("end", event.end().toString());
                 element.setAttribute("category", event.category().name());
+                if (!event.customCategory().isEmpty()) element.setAttribute("customCategory", event.customCategory());
+                if (!event.customPlace().isEmpty()) element.setAttribute("customPlace", event.customPlace());
                 Semester semester = model.semesterOf(event.id());
                 if (semester != null) element.setAttribute("semester", semester.id());
                 if (event.recurring()) {
@@ -217,12 +230,19 @@ public final class PlannerStore {
                 element.setAttribute("lon", Double.toString(pin.lon()));
             }
             Element deadlines = append(document, root, "deadlines");
-            for (PlannerModel.Deadline deadline : model.deadlines()) {
+            for (PlannerModel.Deadline deadline : model.allTasks()) {
                 Element element = append(document, deadlines, "deadline");
                 element.setAttribute("id", deadline.id());
                 element.setAttribute("title", deadline.title());
                 element.setAttribute("date", deadline.date().toString());
+                if (!deadline.date().equals(deadline.plannerDate())) {
+                    element.setAttribute("plannerDate", deadline.plannerDate().toString());
+                }
+                if (!deadline.deadlineLinked()) element.setAttribute("deadlineLinked", "false");
                 element.setAttribute("completed", Boolean.toString(deadline.completed()));
+                if (deadline.priority() != PlannerModel.TaskPriority.NORMAL) {
+                    element.setAttribute("priority", deadline.priority().name());
+                }
                 if (deadline.completedOn() != null) {
                     element.setAttribute("completedOn", deadline.completedOn().toString());
                 }

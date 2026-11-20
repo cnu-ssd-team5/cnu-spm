@@ -1,12 +1,12 @@
 package campus.timetable;
 
 import campus.map.CampusMap;
+import campus.ui.PlacePicker;
 import campus.ui.Theme;
 import campus.model.*;
 import campus.model.PlannerModel.*;
 import campus.model.PlannerModel.Event;
 import javax.swing.*;
-import javax.swing.event.*;
 import java.awt.*;
 import java.time.*;
 import java.util.*;
@@ -22,12 +22,12 @@ public final class TimetablePanel extends JPanel {
     private final WeekGrid grid;
     public TimetablePanel(CampusMap map,PlannerModel model,BooleanSupplier save) {
         super(new BorderLayout());setOpaque(false);this.map=map;this.model=model;this.service=new TimetableService(model);this.save=save;
-        grid=new WeekGrid(service,map,(WeekGrid.RangeEditor)this::edit);
+        grid=new WeekGrid(service,map,this::edit,save);
         JPanel bar=Theme.transparent(new BorderLayout(10,0));
         bar.add(period,BorderLayout.CENTER);
-        bar.add(Theme.label("빈 시간대를 드래그하여 일정 추가 · 더블클릭하여 편집",11,Theme.MUTED),BorderLayout.SOUTH);
+        bar.add(Theme.label("빈 시간대 드래그로 추가 · 일정 더블클릭으로 편집 · 우클릭으로 수정·삭제 선택",11,Theme.MUTED),BorderLayout.SOUTH);
         add(bar,BorderLayout.NORTH);
-        JScrollPane scroll=Theme.scroll(grid);scroll.getVerticalScrollBar().setUnitIncrement(24);add(scroll);
+        add(grid.scrollPane(), BorderLayout.CENTER);
     }
     private LocalDate selectedDate = campus.calendar.PlannerTime.today();
     private final JLabel period=Theme.heading("주간 시간표",17);
@@ -60,30 +60,16 @@ public final class TimetablePanel extends JPanel {
         TimePicker start=new TimePicker(false); start.setTime(original==null?time:original.start());
         LocalTime until=selectedEnd;
         TimePicker end=new TimePicker(true); end.setTime(original==null?until:original.end());
-        JTextField query=new JTextField();JComboBox<CampusMap.Building> places=new JComboBox<>();
-        JComboBox<Category> category=new JComboBox<>(Category.values());category.setSelectedItem(original==null?Category.CLASS:original.category());
+        JTextField query=new JTextField();
+        CampusMap.Building initial = original == null ? initialPlace : map.building(original.buildingId());
+        PlacePicker places = new PlacePicker(map, model, query, initial, original == null ? "" : original.customPlace());
+        JComboBox<Category> category = new JComboBox<>(Category.values());
+        category.setEditable(true);
+        category.getAccessibleContext().setAccessibleName("일정 종류");
+        if (original != null) {
+            category.setSelectedItem(original.customCategory().isEmpty() ? original.category() : original.customCategory());
+        }
         JTextArea note=new JTextArea(original==null?"":original.note(),3,25);note.setLineWrap(true);
-        List<CampusMap.Building> choices=map.buildings().stream().sorted(Comparator
-                .comparing((CampusMap.Building b)->!model.isFavorite(b.id())).thenComparing(CampusMap.Building::name)).toList();
-        Set<String> seen=new HashSet<>(),duplicates=new HashSet<>();
-        choices.forEach(b->{if(!seen.add(b.name()))duplicates.add(b.name());});
-        places.setRenderer(new DefaultListCellRenderer(){
-            public Component getListCellRendererComponent(JList<?> list,Object value,int index,boolean selected,boolean focus){
-                String text="장소를 선택하세요";
-                if(value instanceof CampusMap.Building b)text=(model.isFavorite(b.id())?"★ ":"")+b.name()+(duplicates.contains(b.name())?" · "+b.id():"");
-                return super.getListCellRendererComponent(list,text,index,selected,focus);
-            }
-        });
-        Runnable filter=()->{
-            CampusMap.Building previous=(CampusMap.Building)places.getSelectedItem();
-            String q=query.getText().strip().toLowerCase(Locale.ROOT);
-            places.removeAllItems();places.addItem(null);
-            choices.stream().filter(b->b.name().toLowerCase(Locale.ROOT).contains(q)).forEach(places::addItem);
-            if(previous!=null&&previous.name().toLowerCase(Locale.ROOT).contains(q))places.setSelectedItem(previous);
-            else if(places.getItemCount()==2)places.setSelectedIndex(1);
-        };filter.run();
-        places.setSelectedItem(original==null?initialPlace:map.building(original.buildingId()));
-        query.getDocument().addDocumentListener(new DocumentListener(){public void insertUpdate(DocumentEvent e){filter.run();}public void removeUpdate(DocumentEvent e){filter.run();}public void changedUpdate(DocumentEvent e){filter.run();}});
         JPanel days=Theme.transparent(new FlowLayout(FlowLayout.LEFT,3,0));Map<DayOfWeek,JCheckBox> checks=new EnumMap<>(DayOfWeek.class);
         Set<DayOfWeek> selected=new HashSet<>();if(original==null||!original.recurring())selected.add(day);else service.group(original).forEach(e->selected.add(e.weekday()));
         String[] labels={"일","월","화","수","목","금","토"};
@@ -115,32 +101,36 @@ public final class TimetablePanel extends JPanel {
         row=row(fields,c,row,"반복 요일 · 여러 요일 선택",days);
         JPanel times=Theme.transparent(new GridLayout(1,2,12,0));times.add(start);times.add(end);
         row=row(fields,c,row,"시작 / 종료",times);
-        row=row(fields,c,row,"일정 종류",category);
+        row=row(fields,c,row,"일정 종류 · 선택 또는 직접 입력",category);
         row=row(fields,c,row,"건물 검색",query);
-        row=row(fields,c,row,"장소 · 즐겨찾기 건물이 먼저 표시됩니다",places);
+        row=row(fields,c,row,"장소 · 선택 또는 직접 입력",places);
         note.setWrapStyleWord(true);
         JScrollPane memoScroll=new JScrollPane(note);memoScroll.setPreferredSize(new Dimension(0,80));memoScroll.setMinimumSize(new Dimension(0,65));
         row(fields,c,row,"메모 · 강의실, 준비물, 모임 안내",memoScroll);
         for(JComponent field:List.of(title,query,note))Theme.field(field);
-        for(JComboBox<?> combo:List.of(category,places)){combo.setFont(Theme.font(13,Font.PLAIN));combo.setBackground(Color.WHITE);}
-        places.setMaximumRowCount(12);
-        query.setToolTipText("건물 이름을 입력한 뒤 아래 목록에서 장소를 선택하세요");
+        category.setFont(Theme.font(13,Font.PLAIN));
+        category.setBackground(Color.WHITE);
         content.add(Theme.scroll(fields),BorderLayout.CENTER);
         JLabel error=Theme.label(" ",12,Theme.WARNING);
         JPanel south=Theme.transparent(new BorderLayout(0,8));south.add(error,BorderLayout.NORTH);
         JPanel buttons=Theme.transparent(new FlowLayout(FlowLayout.RIGHT,8,0));
-        if(original!=null){JButton delete=Theme.button(original.recurring()?"반복 일정 전체 삭제":"일정 삭제",false,()->{
-            if(JOptionPane.showConfirmDialog(dialog,original.recurring()?"이 반복 일정의 모든 요일을 삭제할까요?":"이 일정을 삭제할까요?","삭제",JOptionPane.YES_NO_OPTION)!=JOptionPane.YES_OPTION)return;
-            service.delete(original);save.getAsBoolean();grid.refresh();dialog.dispose();
-        });delete.setForeground(Theme.WARNING);buttons.add(delete);}
+        if(original!=null){JButton delete=Theme.deleteButton(original.recurring()?"반복 일정 전체 삭제":"일정 삭제",()->{
+            if (grid.confirmDelete(dialog, original)) dialog.dispose();
+        });buttons.add(delete);}
         buttons.add(Theme.button("취소",false,dialog::dispose));
         JButton commit=Theme.button("일정 저장",true,()->{
             try {
-                CampusMap.Building building=(CampusMap.Building)places.getSelectedItem();if(building==null)throw new IllegalArgumentException("건물을 선택하세요.");
+                PlacePicker.Selection place = places.selection();
+                String categoryText = ((JTextField) category.getEditor().getEditorComponent()).getText().strip();
+                if (categoryText.isEmpty()) throw new IllegalArgumentException("일정 종류를 선택하거나 직접 입력해 주세요.");
+                Category kind = Category.fromLabel(categoryText);
+                String customCategory = kind.toString().equals(categoryText) ? "" : categoryText;
                 Set<DayOfWeek> chosen=EnumSet.noneOf(DayOfWeek.class);checks.forEach((d,check)->{if(check.isSelected())chosen.add(d);});
                 List<Event> proposed = repeat.isSelected()
-                        ? service.prepare(original,title.getText(),building.id(),start.time(),end.time(),(Category)category.getSelectedItem(),chosen,note.getText())
-                        : List.of(service.prepareOnce(original,title.getText(),building.id(),start.time(),end.time(),(Category)category.getSelectedItem(),LocalDate.parse(date.getText().strip()),note.getText()));
+                        ? service.prepare(original, title.getText(), place.buildingId(), start.time(), end.time(),
+                                kind, chosen, note.getText(), customCategory, place.customPlace())
+                        : List.of(service.prepareOnce(original, title.getText(), place.buildingId(), start.time(), end.time(),
+                                kind, LocalDate.parse(date.getText().strip()), note.getText(), customCategory, place.customPlace()));
                 if(original!=null && original.recurring() && once.isSelected()
                         && JOptionPane.showConfirmDialog(dialog,"기존 반복 일정의 모든 요일을 삭제하고 선택한 날짜의 일정 하나로 바꿀까요?",
                                 "반복 변경",JOptionPane.YES_NO_OPTION)!=JOptionPane.YES_OPTION)return;

@@ -11,6 +11,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
 import javax.swing.*;
+import javax.swing.plaf.LayerUI;
 import campus.map.CampusMap;
 import campus.map.CampusMap.Building;
 import campus.map.RouteService;
@@ -32,6 +33,8 @@ import campus.weather.WeatherForecast;
 /** 메인 창. 화면 배치와 선택한 날짜·건물을 관리하고, 변경이 생기면 저장합니다. */
 public final class MainFrame extends JFrame {
     private static final DateTimeFormatter CLOCK = DateTimeFormatter.ofPattern("HH:mm");
+    private static final String PLANNER_VIEW = "플래너";
+    private static final List<String> VIEW_ORDER = List.of("지도", PLANNER_VIEW, "주간시간표", "달력", "과목자료");
     private final CampusMap data;
     private final RouteService routes;
     private final DayPlanService plans;
@@ -44,7 +47,12 @@ public final class MainFrame extends JFrame {
     private final TimetablePanel timetable;
     private final CalendarPanel calendar;
     private final CourseMaterialsPanel materials;
+    private final DailyPlannerPanel dailyPlanner;
+    private final JButton previousView = viewArrow(-1);
+    private final JButton nextView = viewArrow(1);
     private String activeView="지도";
+    private LocalDate plannerDate = PlannerTime.today();
+    private boolean workspaceHovered;
     private final java.util.Map<String,JButton> viewButtons=new java.util.LinkedHashMap<>();
     private final campus.folder.FolderModule folders;
     private final WeekBar week;
@@ -96,9 +104,9 @@ public final class MainFrame extends JFrame {
         map.setRouteMenu(this::routeMenu);
         map.setPinCreator(this::addPin);
         timetable=new TimetablePanel(data,model,this::saveChanged);
-        calendar=new CalendarPanel(model,this::changeDate,date->editDeadline(null,date),
-                item->editDeadline(item,item.date()));
+        calendar=new CalendarPanel(model,this::changeDate,this::openPlanner);
         materials=new CourseMaterialsPanel(model,data,folders);
+        dailyPlanner=new DailyPlannerPanel(this,model);
         week = new WeekBar(this, model);
         places = new PlacesPanel(this, data, model);
         daily = new SchedulePanel(this, data, model);
@@ -141,7 +149,8 @@ public final class MainFrame extends JFrame {
         views.add(viewCard(timetable),"주간시간표");
         views.add(viewCard(calendar),"달력");
         views.add(viewCard(materials),"과목자료");
-        workspace.add(views, BorderLayout.CENTER);
+        views.add(viewCard(dailyPlanner),PLANNER_VIEW);
+        workspace.add(viewSwitcher(), BorderLayout.CENTER);
         daily.panel.setPreferredSize(new Dimension(285, 0));
         workspace.add(daily.panel, BorderLayout.EAST);
         center.add(workspace, BorderLayout.CENTER);
@@ -170,7 +179,7 @@ public final class MainFrame extends JFrame {
     private JPanel header() {
         JPanel header = Theme.transparent(new BorderLayout(20, 0));
         JPanel actions = Theme.transparent(new FlowLayout(FlowLayout.RIGHT, 9, 6));
-        for(String view:List.of("지도","주간시간표","달력","과목자료")) {
+        for(String view:VIEW_ORDER) {
             JButton button=Theme.button(view,false,()->showView(view));viewButtons.put(view,button);actions.add(button);
         }
         actions.add(workspaceButton);
@@ -191,6 +200,7 @@ public final class MainFrame extends JFrame {
         if(!reminders.lastError().isEmpty())notificationStatus.setToolTipText(reminders.lastError());
     }
     @Override public void dispose() {
+        if (noteTimer != null) noteTimer.stop();
         weatherTimer.stop();
         if (weatherRequest != null) weatherRequest.cancel(true);
         if(reminderTimer!=null)reminderTimer.stop();
@@ -224,6 +234,7 @@ public final class MainFrame extends JFrame {
                 }
                 calendar.showWeather(forecast, status);
                 week.showWeather(selectedDate, forecast);
+                dailyPlanner.showWeather(forecast.get(plannerDate));
             }
         };
         weatherRequest.execute();
@@ -243,12 +254,110 @@ public final class MainFrame extends JFrame {
     private JPanel viewCard(JComponent content) {
         JPanel card=Theme.card(new BorderLayout());card.add(content);return card;
     }
+
+    private JLayer<JLayeredPane> viewSwitcher() {
+        JLayeredPane switcher = new JLayeredPane() {
+            @Override public void doLayout() {
+                int width = getWidth();
+                int height = getHeight();
+                views.setBounds(10, 0, Math.max(0, width - 20), height);
+                int y = Math.max(0, (height - 50) / 2);
+                previousView.setBounds(0, y, 28, 50);
+                nextView.setBounds(Math.max(0, width - 28), y, 28, 50);
+            }
+        };
+        switcher.add(views, JLayeredPane.DEFAULT_LAYER);
+        switcher.add(previousView, JLayeredPane.PALETTE_LAYER);
+        switcher.add(nextView, JLayeredPane.PALETTE_LAYER);
+        return new JLayer<>(switcher, new LayerUI<>() {
+            @Override public void installUI(JComponent component) {
+                super.installUI(component);
+                ((JLayer<?>) component).setLayerEventMask(AWTEvent.MOUSE_EVENT_MASK | AWTEvent.MOUSE_MOTION_EVENT_MASK);
+            }
+
+            @Override public void uninstallUI(JComponent component) {
+                ((JLayer<?>) component).setLayerEventMask(0);
+                super.uninstallUI(component);
+            }
+
+            @Override public void eventDispatched(AWTEvent event, JLayer<? extends JLayeredPane> layer) {
+                if (!(event instanceof MouseEvent mouse)) return;
+                Point position = SwingUtilities.convertPoint(mouse.getComponent(), mouse.getPoint(), layer);
+                boolean inside = layer.contains(position);
+                if (inside != workspaceHovered) {
+                    workspaceHovered = inside;
+                    previousView.repaint();
+                    nextView.repaint();
+                }
+            }
+        });
+    }
+
+    private JButton viewArrow(int direction) {
+        JButton arrow = new JButton() {
+            @Override protected void paintComponent(Graphics graphics) {
+                if (!workspaceHovered && !isFocusOwner()) return;
+                Graphics2D g = (Graphics2D) graphics.create();
+                g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                boolean emphasized = getModel().isRollover() || isFocusOwner();
+                g.setColor(new Color(255, 255, 255, emphasized ? 245 : 193));
+                g.fillRoundRect(1, 1, getWidth() - 2, getHeight() - 2, 12, 12);
+                g.setColor(emphasized ? Theme.BLUE : Theme.LINE);
+                g.drawRoundRect(1, 1, getWidth() - 3, getHeight() - 3, 12, 12);
+                g.setColor(emphasized ? Theme.BLUE : Theme.MUTED);
+                g.setStroke(new BasicStroke(2, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                int x = getWidth() / 2;
+                int y = getHeight() / 2;
+                g.drawPolyline(new int[]{x - direction * 3, x + direction * 4, x - direction * 3},
+                        new int[]{y - 8, y, y + 8}, 3);
+                g.dispose();
+            }
+            @Override public boolean contains(int x, int y) {
+                return workspaceHovered && super.contains(x, y);
+            }
+        };
+        arrow.setContentAreaFilled(false);
+        arrow.setBorderPainted(false);
+        arrow.setRequestFocusEnabled(false);
+        arrow.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        arrow.addActionListener(e -> showView(adjacentView(direction)));
+        return arrow;
+    }
+
+    private String adjacentView(int direction) {
+        return VIEW_ORDER.get(Math.floorMod(VIEW_ORDER.indexOf(activeView) + direction, VIEW_ORDER.size()));
+    }
+
     private void showView(String name) {
+        showView(name, null);
+    }
+
+    void openPlanner(LocalDate date) {
+        showView(PLANNER_VIEW, date);
+        if (PLANNER_VIEW.equals(activeView) && plannerDate.equals(date)) {
+            SwingUtilities.invokeLater(dailyPlanner::focusAddTask);
+        }
+    }
+
+    private void showView(String name, LocalDate targetPlannerDate) {
         if(folders.isBusy())return;
         noteTimer.stop(); if(unsaved&&!persist())return;
+        if (PLANNER_VIEW.equals(name)) {
+            plannerDate = targetPlannerDate == null ? PlannerTime.today() : targetPlannerDate;
+            if (targetPlannerDate != null && !selectedDate.equals(targetPlannerDate)) selectDate(targetPlannerDate);
+        }
         folders.closePopup();activeView=name;viewLayout.show(views,name);updateViewButtons();refresh();
     }
+
+    void selectWeekDate(LocalDate date) {
+        if (!PLANNER_VIEW.equals(activeView)) changeDate(date);
+        else if (!date.equals(plannerDate) || !date.equals(selectedDate)) showView(PLANNER_VIEW, date);
+    }
     private void updateViewButtons() {
+        previousView.setToolTipText(adjacentView(-1) + " 보기");
+        nextView.setToolTipText(adjacentView(1) + " 보기");
+        previousView.getAccessibleContext().setAccessibleName(previousView.getToolTipText());
+        nextView.getAccessibleContext().setAccessibleName(nextView.getToolTipText());
         viewButtons.forEach((name,button)->{
             boolean selected=name.equals(activeView);
             button.putClientProperty("calendar.fill",selected?Theme.PALE_BLUE:null);
@@ -258,9 +367,19 @@ public final class MainFrame extends JFrame {
     private boolean saveChanged() {
         unsaved=true;boolean saved=persist();refresh();return saved;
     }
-    void editDeadline(PlannerModel.Deadline item,LocalDate date) {
-        var result=DeadlineDialog.open(this,date,item);if(result==null)return;
+    void editDeadline(PlannerModel.Deadline item,LocalDate date,boolean linked) {
+        var result=DeadlineDialog.open(this,date,item,linked);if(result==null)return;
         if(result.deleted())model.removeDeadline(result.deadline().id());else model.putDeadline(result.deadline());
+        saveChanged();
+    }
+    void toggleDailyTask(PlannerModel.Deadline task) {
+        model.toggleDeadline(task.id());
+        saveChanged();
+    }
+    void deleteDailyTask(PlannerModel.Deadline task) {
+        if (JOptionPane.showConfirmDialog(this, "이 체크리스트 항목을 삭제할까요?", "항목 삭제",
+                JOptionPane.YES_NO_OPTION) != JOptionPane.YES_OPTION) return;
+        model.removeDeadline(task.id());
         saveChanged();
     }
     private void share(boolean importing) {
@@ -354,10 +473,14 @@ public final class MainFrame extends JFrame {
     void changeDate(LocalDate date) {
         noteTimer.stop();
         if (unsaved && !persist()) return;
+        selectDate(date);
+        refresh();
+    }
+
+    private void selectDate(LocalDate date) {
         selectedDate = date;
         searchedRoute = null;
         map.clearSearchRoute();
-        refresh();
     }
 
     private void refresh() {
@@ -369,6 +492,7 @@ public final class MainFrame extends JFrame {
         List<Leg> legs = plans.legs(occurrences);
         map.setOccurrences(occurrences, legs);
         daily.refresh(selectedDate, occurrences, legs);
+        dailyPlanner.refresh(plannerDate, forecast.get(plannerDate));
         updateMapSummary();
         places.refresh();
         checkReminders();
@@ -396,7 +520,7 @@ public final class MainFrame extends JFrame {
         }
         long count = model.occurrences(selectedDate).stream().filter(o -> !o.canceled()).count();
         double meters = map.legs().stream().filter(l -> l.route().reachable()).mapToDouble(l -> l.route().meters()).sum();
-        long unavailable = map.legs().stream().filter(l -> !l.route().reachable()).count();
+        long unavailable = map.legs().stream().filter(SchedulePanel::showsWalkingLeg).filter(l -> !l.route().reachable()).count();
         int minutes = map.legs().stream().filter(l -> l.route().reachable()).mapToInt(Leg::minutes).sum();
         mapSubtitle.setText(count == 0 ? "날짜를 고르고 일정을 추가해 보세요" :
                 count + "개 일정 · " + String.format(Locale.ROOT, "%,.0f m", meters) + " · 약 " + minutes + "분"
@@ -424,7 +548,7 @@ public final class MainFrame extends JFrame {
         JMenuItem rename=new JMenuItem("이름 변경");rename.addActionListener(e->renamePlace(building));menu.add(rename);
         JMenuItem note = buildingNoteItem(building);
         if (note != null) menu.add(note);
-        if(building.id().startsWith("pin:")) {JMenuItem delete=new JMenuItem("핀 삭제");delete.addActionListener(e->deletePin(building));menu.add(delete);}
+        if(building.id().startsWith("pin:")) menu.add(Theme.deleteMenuItem("핀 삭제", () -> deletePin(building)));
         return menu;
     }
 

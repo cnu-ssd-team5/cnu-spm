@@ -23,11 +23,13 @@ public final class CalendarPanel extends JPanel {
     private static final Color CELL_LINE = new Color(145, 161, 183);
     private final PlannerModel model;
     private final Consumer<LocalDate> onDateSelect;
-    private final Consumer<LocalDate> onAddDeadline;
-    private final Consumer<Deadline> onEditDeadline;
+    private final Consumer<LocalDate> onOpenPlanner;
     private final Consumer<Semester> onSemesterSelect;
-    private final JSpinner year = new JSpinner(new SpinnerNumberModel(PlannerTime.today().getYear(), 1900, 9999, 1));
-    private final JComboBox<Integer> month = new JComboBox<>(new Integer[] {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12});
+    private final JTextField year = new JTextField(6);
+    private final JPopupMenu monthPicker = new JPopupMenu();
+    private final JButton monthSelector;
+    private final JButton[] monthButtons = new JButton[12];
+    private final JLabel yearError = Theme.label(" ", 11, DUE_COLOR);
     private final JComboBox<Semester.Season> season = new JComboBox<>(Semester.Season.values());
     private final JPanel days = new JPanel(new GridLayout(0, 7, 3, 3));
     private final JLabel holidayRange = Theme.label(" ", 11, Theme.MUTED);
@@ -41,18 +43,17 @@ public final class CalendarPanel extends JPanel {
     private Point lastClickPoint;
 
     public CalendarPanel(PlannerModel model, Consumer<LocalDate> onDateSelect,
-                  Consumer<LocalDate> onAddDeadline, Consumer<Deadline> onEditDeadline) {
-        this(model, onDateSelect, onAddDeadline, onEditDeadline, term -> onDateSelect.accept(term.start()));
+                         Consumer<LocalDate> onOpenPlanner) {
+        this(model, onDateSelect, onOpenPlanner, term -> onDateSelect.accept(term.start()));
     }
 
     public CalendarPanel(PlannerModel model, Consumer<LocalDate> onDateSelect,
-                  Consumer<LocalDate> onAddDeadline, Consumer<Deadline> onEditDeadline,
+                  Consumer<LocalDate> onOpenPlanner,
                   Consumer<Semester> onSemesterSelect) {
         super(new BorderLayout(0, 10));
         this.model = model;
         this.onDateSelect = onDateSelect;
-        this.onAddDeadline = onAddDeadline;
-        this.onEditDeadline = onEditDeadline;
+        this.onOpenPlanner = onOpenPlanner;
         this.onSemesterSelect = onSemesterSelect;
         setOpaque(false);
 
@@ -80,24 +81,13 @@ public final class CalendarPanel extends JPanel {
 
         JPanel navigation = Theme.transparent(new BorderLayout(8, 0));
         JPanel monthControls = Theme.transparent(new FlowLayout(FlowLayout.LEFT, 6, 0));
-        monthControls.add(Theme.button("‹", false, () -> changeMonth(-1)));
-        year.setEditor(new JSpinner.NumberEditor(year, "0"));
-        year.setName("calendarYear");
-        year.setPreferredSize(new Dimension(95, 34));
-        monthControls.add(year);
-        monthControls.add(Theme.label("년", 12, Theme.MUTED));
-        month.setName("calendarMonth");
-        month.setFont(Theme.font(12, Font.PLAIN));
-        month.setRenderer(new DefaultListCellRenderer() {
-            @Override public Component getListCellRendererComponent(JList<?> list, Object value, int index,
-                    boolean selected, boolean focus) {
-                return super.getListCellRendererComponent(list, value + "월", index, selected, focus);
-            }
-        });
-        monthControls.add(month);
-        monthControls.add(Theme.button("›", false, () -> changeMonth(1)));
-        year.addChangeListener(e -> selectMonth());
-        month.addActionListener(e -> selectMonth());
+        monthControls.add(monthArrow("‹", "이전 달", -1));
+        monthSelector = Theme.button(monthCaption(selectedDate), false, this::openMonthPicker);
+        monthSelector.setName("calendarMonth");
+        monthSelector.setToolTipText("연도와 월 선택");
+        monthControls.add(monthSelector);
+        monthControls.add(monthArrow("›", "다음 달", 1));
+        buildMonthPicker();
         navigation.add(monthControls, BorderLayout.WEST);
         navigation.add(Theme.button("오늘", false, () -> onDateSelect.accept(PlannerTime.today())), BorderLayout.EAST);
         top.add(navigation, BorderLayout.SOUTH);
@@ -125,12 +115,11 @@ public final class CalendarPanel extends JPanel {
                 }
             });
         }
-        days.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT).put(KeyStroke.getKeyStroke("ENTER"),"addDeadline");
-        days.getInputMap(JComponent.WHEN_FOCUSED).put(KeyStroke.getKeyStroke("ENTER"),"addDeadline");
-        days.getActionMap().put("addDeadline",new AbstractAction() {
+        days.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT).put(KeyStroke.getKeyStroke("ENTER"), "openPlanner");
+        days.getInputMap(JComponent.WHEN_FOCUSED).put(KeyStroke.getKeyStroke("ENTER"), "openPlanner");
+        days.getActionMap().put("openPlanner", new AbstractAction() {
             @Override public void actionPerformed(ActionEvent event) {
-                clearDateClick();
-                onAddDeadline.accept(selectedDate);
+                openPlanner(selectedDate);
             }
         });
         calendar.add(days, BorderLayout.CENTER);
@@ -139,7 +128,7 @@ public final class CalendarPanel extends JPanel {
         JPanel bottom = Theme.transparent(new BorderLayout());
         holidayRange.setToolTipText("확인된 공휴일만 표시하며, 공휴일이라고 일정을 자동으로 휴강 처리하지 않습니다.");
         bottom.add(holidayRange, BorderLayout.WEST);
-        bottom.add(Theme.label("날짜 더블클릭 또는 Enter로 할일 추가",11,Theme.MUTED),BorderLayout.EAST);
+        bottom.add(Theme.label("날짜 더블클릭 또는 Enter로 플래너 열기", 11, Theme.MUTED), BorderLayout.EAST);
         JPanel footer = Theme.transparent(new BorderLayout(0, 3));
         footer.add(bottom, BorderLayout.NORTH);
         footer.add(weatherStatus, BorderLayout.SOUTH);
@@ -165,8 +154,7 @@ public final class CalendarPanel extends JPanel {
         selectedSemester = semester;
         refreshing = true;
         try {
-            year.setValue(date.getYear());
-            month.setSelectedItem(date.getMonthValue());
+            monthSelector.setText(monthCaption(date));
             season.setSelectedItem(semester.season());
             season.repaint();
         } finally {
@@ -209,14 +197,81 @@ public final class CalendarPanel extends JPanel {
         }
     }
 
-    private void selectMonth() {
-        if (refreshing) return;
-        YearMonth target = YearMonth.of(((Number) year.getValue()).intValue(), (Integer) month.getSelectedItem());
-        onDateSelect.accept(target.atDay(Math.min(selectedDate.getDayOfMonth(), target.lengthOfMonth())));
+    private JButton monthArrow(String text, String label, int offset) {
+        JButton button = Theme.button(text, false, () -> changeMonth(offset));
+        button.setToolTipText(label);
+        button.getAccessibleContext().setAccessibleName(label);
+        return button;
+    }
+
+    private static String monthCaption(LocalDate date) {
+        return date.getYear() + "년 " + date.getMonthValue() + "월";
+    }
+
+    private void buildMonthPicker() {
+        JPanel picker = Theme.card(new BorderLayout(0, 10));
+        picker.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
+        JPanel yearRow = Theme.transparent(new BorderLayout(8, 0));
+        JLabel yearLabel = Theme.heading("연도", 12);
+        yearLabel.setLabelFor(year);
+        year.setName("calendarYear");
+        year.setHorizontalAlignment(JTextField.CENTER);
+        Theme.field(year);
+        year.addActionListener(e -> selectMonth(selectedDate.getMonthValue()));
+        yearRow.add(yearLabel, BorderLayout.WEST);
+        yearRow.add(year, BorderLayout.CENTER);
+        picker.add(yearRow, BorderLayout.NORTH);
+
+        JPanel months = Theme.transparent(new GridLayout(4, 3, 4, 4));
+        for (int index = 0; index < monthButtons.length; index++) {
+            int month = index + 1;
+            JButton button = Theme.button(month + "월", false, () -> selectMonth(month));
+            button.setBorder(BorderFactory.createEmptyBorder(6, 9, 6, 9));
+            monthButtons[index] = button;
+            months.add(button);
+        }
+        picker.add(months, BorderLayout.CENTER);
+        picker.add(yearError, BorderLayout.SOUTH);
+        monthPicker.setBorder(BorderFactory.createLineBorder(Theme.LINE));
+        monthPicker.add(picker);
+    }
+
+    private void openMonthPicker() {
+        year.setText(Integer.toString(selectedDate.getYear()));
+        yearError.setText(" ");
+        for (int index = 0; index < monthButtons.length; index++) {
+            boolean selected = index + 1 == selectedDate.getMonthValue();
+            monthButtons[index].putClientProperty("calendar.fill", selected ? Theme.PALE_BLUE : null);
+            monthButtons[index].setForeground(selected ? Theme.BLUE : Theme.INK);
+        }
+        monthPicker.show(monthSelector, 0, monthSelector.getHeight() + 4);
+        SwingUtilities.invokeLater(() -> {
+            year.requestFocusInWindow();
+            year.selectAll();
+        });
+    }
+
+    private void selectMonth(int month) {
+        int selectedYear;
+        try {
+            selectedYear = Integer.parseInt(year.getText().strip());
+            if (selectedYear < 1900 || selectedYear > 9999) throw new NumberFormatException();
+        } catch (NumberFormatException error) {
+            yearError.setText("1900~9999년을 입력하세요.");
+            year.requestFocusInWindow();
+            year.selectAll();
+            return;
+        }
+        monthPicker.setVisible(false);
+        changeMonth(YearMonth.of(selectedYear, month));
     }
 
     private void changeMonth(int amount) {
-        YearMonth target = YearMonth.from(selectedDate).plusMonths(amount);
+        changeMonth(YearMonth.from(selectedDate).plusMonths(amount));
+    }
+
+    private void changeMonth(YearMonth target) {
+        clearDateClick();
         onDateSelect.accept(target.atDay(Math.min(selectedDate.getDayOfMonth(), target.lengthOfMonth())));
     }
 
@@ -244,7 +299,12 @@ public final class CalendarPanel extends JPanel {
         day.setBorder(BorderFactory.createEmptyBorder(1, 2, 1, 2));
         day.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         day.setName(date.toString());
-        day.setToolTipText(date + (holiday.isBlank() ? "" : " · " + holiday));
+        day.getAccessibleContext().setAccessibleName(date.toString());
+        day.getAccessibleContext().setAccessibleDescription("더블클릭 또는 Enter로 플래너 열기");
+        day.getInputMap(JComponent.WHEN_FOCUSED).put(KeyStroke.getKeyStroke("ENTER"), "openPlanner");
+        day.getActionMap().put("openPlanner", new AbstractAction() {
+            @Override public void actionPerformed(ActionEvent event) { openPlanner(date); }
+        });
         boolean[] mousePressed = {false};
         day.addMouseListener(new MouseAdapter() {
             @Override public void mousePressed(MouseEvent event) {
@@ -289,29 +349,19 @@ public final class CalendarPanel extends JPanel {
         for (Deadline deadline : deadlines) {
             detail.append("<br>").append(Theme.html(deadline.title())).append(" · ").append(status(deadline));
         }
+        detail.append("<br>더블클릭 또는 Enter로 플래너 열기");
         String tooltip = detail.append("</html>").toString();
         int visible = Math.max(0, Math.min(deadlines.size(), 2 - assignments.getComponentCount()));
         if (deadlines.size() > visible && visible > 0) visible--;
         for (Deadline deadline : deadlines.stream().limit(visible).toList()) {
-            JButton item = new JButton(deadline.title());
-            item.setFont(Theme.font(11, Font.PLAIN));
-            item.setForeground(deadline.completed() ? Theme.MUTED : DUE_COLOR);
-            item.setHorizontalAlignment(SwingConstants.LEFT);
-            item.setContentAreaFilled(false);
-            item.setBorder(BorderFactory.createEmptyBorder(0, 1, 0, 1));
-            item.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-            item.setToolTipText(deadline.title() + " · " + status(deadline));
-            item.addActionListener(e -> onEditDeadline.accept(deadline));
+            JLabel item = Theme.label("", 11, deadline.completed() ? Theme.MUTED : DUE_COLOR);
+            item.putClientProperty("html.disable", true);
+            item.setText(deadline.title());
             assignments.add(item);
         }
         if (deadlines.size() > visible && assignments.getComponentCount() < 2) {
-            JButton more = new JButton(visible == 0 ? "할일 " + deadlines.size() + "개" : "+ " + (deadlines.size() - visible) + "개");
-            more.setFont(Theme.font(10, Font.PLAIN));
-            more.setForeground(deadlines.stream().anyMatch(deadline -> !deadline.completed()) ? DUE_COLOR : Theme.MUTED);
-            more.setContentAreaFilled(false);
-            more.setBorder(BorderFactory.createEmptyBorder());
-            more.setToolTipText(tooltip);
-            more.addActionListener(e -> onDateSelect.accept(date));
+            String text = visible == 0 ? "마감 " + deadlines.size() + "개" : "+ " + (deadlines.size() - visible) + "개";
+            JLabel more = Theme.label(text, 10, deadlines.stream().anyMatch(deadline -> !deadline.completed()) ? DUE_COLOR : Theme.MUTED);
             assignments.add(more);
         }
         JPanel topAligned = Theme.transparent(new BorderLayout());
@@ -343,6 +393,11 @@ public final class CalendarPanel extends JPanel {
         lastClickDate=null;lastClickPoint=null;lastClickWhen=0;
     }
 
+    private void openPlanner(LocalDate date) {
+        clearDateClick();
+        onOpenPlanner.accept(date);
+    }
+
     private void dateClicked(LocalDate date, MouseEvent event) {
         Point point=SwingUtilities.convertPoint(event.getComponent(),event.getPoint(),this);
         Object setting=Toolkit.getDefaultToolkit().getDesktopProperty("awt.multiClickInterval");
@@ -351,11 +406,13 @@ public final class CalendarPanel extends JPanel {
         boolean nearby=lastClickPoint!=null && lastClickPoint.distance(point)<=6;
         boolean repeated=date.equals(lastClickDate) && nearby && elapsed>=0 && elapsed<=interval;
         boolean doubleClick=event.getClickCount()==2 || (event.getClickCount()==1 && repeated);
-        if (doubleClick) clearDateClick();
-        else {lastClickDate=date;lastClickWhen=event.getWhen();lastClickPoint=point;}
+        if (doubleClick) {
+            openPlanner(date);
+            return;
+        }
+        lastClickDate=date;lastClickWhen=event.getWhen();lastClickPoint=point;
         onDateSelect.accept(date);
         SwingUtilities.invokeLater(this::focusSelectedDay);
-        if (doubleClick) onAddDeadline.accept(date);
     }
 
     static String status(Deadline deadline) {

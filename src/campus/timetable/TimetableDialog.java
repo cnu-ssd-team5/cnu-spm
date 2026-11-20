@@ -22,11 +22,11 @@ public final class TimetableDialog extends JDialog {
     private final WeekGrid grid;
     public TimetableDialog(JFrame owner,CampusMap map,PlannerModel model,BooleanSupplier save) {
         super(owner,"주간 시간표",true);this.map=map;this.model=model;this.service=new TimetableService(model);this.save=save;
-        grid=new WeekGrid(service,map,this::edit);
+        grid=new WeekGrid(service,map,(event,day,start,end)->edit(event,day,start),save);
         JPanel bar=new JPanel(new FlowLayout(FlowLayout.LEFT));
         JButton add=new JButton("+ 수업 추가");add.addActionListener(e->edit(null,DayOfWeek.MONDAY,LocalTime.of(9,0)));bar.add(add);
-        JLabel hint=new JLabel("우클릭 메뉴로 수업 추가 · 수정");hint.setForeground(Color.GRAY);bar.add(hint);
-        add(bar,BorderLayout.NORTH);JScrollPane scroll=new JScrollPane(grid);scroll.getVerticalScrollBar().setUnitIncrement(24);add(scroll);
+        JLabel hint=new JLabel("빈칸 우클릭으로 추가 · 일정 우클릭으로 수정·삭제 선택");hint.setForeground(Color.GRAY);bar.add(hint);
+        add(bar,BorderLayout.NORTH);add(grid.scrollPane(),BorderLayout.CENTER);
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
         getRootPane().registerKeyboardAction(e->dispose(),KeyStroke.getKeyStroke("ESCAPE"),JComponent.WHEN_IN_FOCUSED_WINDOW);
         Dimension screen=Toolkit.getDefaultToolkit().getScreenSize();setSize(Math.min(1080,screen.width-60),Math.min(790,screen.height-80));setLocationRelativeTo(owner);
@@ -90,10 +90,10 @@ public final class TimetableDialog extends JDialog {
         JLabel error=Theme.label(" ",12,Theme.WARNING);
         JPanel south=Theme.transparent(new BorderLayout(0,8));south.add(error,BorderLayout.NORTH);
         JPanel buttons=Theme.transparent(new FlowLayout(FlowLayout.RIGHT,8,0));
-        if(original!=null){JButton delete=Theme.button("수업 전체 요일 삭제",false,()->{
+        if(original!=null){JButton delete=Theme.deleteButton("수업 전체 요일 삭제",()->{
             if(JOptionPane.showConfirmDialog(dialog,"이 수업의 모든 요일을 삭제할까요?","삭제",JOptionPane.YES_NO_OPTION)!=JOptionPane.YES_OPTION)return;
             service.delete(original);save.getAsBoolean();grid.refresh();dialog.dispose();
-        });delete.setForeground(Theme.WARNING);buttons.add(delete);}
+        });buttons.add(delete);}
         buttons.add(Theme.button("취소",false,dialog::dispose));
         JButton commit=Theme.button("수업 저장",true,()->{
             try {

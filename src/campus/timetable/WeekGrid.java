@@ -3,6 +3,7 @@ package campus.timetable;
 import campus.map.CampusMap;
 import campus.model.PlannerModel.Event;
 import campus.model.PlannerModel.Occurrence;
+import campus.ui.Theme;
 import javax.swing.*;
 import java.awt.*;
 import java.awt.event.*;
@@ -11,8 +12,7 @@ import java.util.*;
 import java.util.List;
 
 /** 선택한 주의 반복/일회성 일정과 드래그로 선택한 시간 범위를 표시한다. */
-final class WeekGrid extends JPanel {
-    interface Editor { void open(Event event, DayOfWeek day, LocalTime time); }
+final class WeekGrid extends JPanel implements Scrollable {
     interface RangeEditor { void open(Event event, DayOfWeek day, LocalTime start, LocalTime end); }
     record Selection(DayOfWeek day, LocalTime start, LocalTime end) { }
     private final TimetableService service;
@@ -20,17 +20,42 @@ final class WeekGrid extends JPanel {
     private final RangeEditor editor;
     private final Map<Rectangle,Event> boxes = new LinkedHashMap<>();
     private int first = 8, last = 24;
-    private static final int LEFT = 56, TOP = 38, HOUR = 72, START_SNAP = 30, END_SNAP = 5;
+    private static final int LEFT = 56, TOP = 8, HEADER_HEIGHT = 38, HOUR = 72, START_SNAP = 30, END_SNAP = 5;
+    private static final String[] DAY_LABELS = {"일", "월", "화", "수", "목", "금", "토"};
+    private final JComponent dateHeader = new JComponent() {
+        @Override public Dimension getPreferredSize() {
+            return new Dimension(0, HEADER_HEIGHT);
+        }
+
+        @Override protected void paintComponent(Graphics graphics) {
+            Graphics2D g = (Graphics2D) graphics.create();
+            g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+            g.setFont(Theme.font(11, Font.PLAIN));
+            g.setColor(new Color(245, 247, 251));
+            g.fillRect(0, 0, getWidth(), getHeight());
+            int width = columnWidth(getWidth());
+            for (int column = 0; column < DAY_LABELS.length; column++) {
+                LocalDate date = service.dateFor(dayOf(column));
+                String label = DAY_LABELS[column] + " " + date.getMonthValue() + "/" + date.getDayOfMonth();
+                int x = LEFT + column * width;
+                Graphics2D cell = (Graphics2D) g.create(x, 0, width, getHeight());
+                cell.setColor(new Color(45, 55, 75));
+                cell.drawString(label, Math.max(2, (width - cell.getFontMetrics().stringWidth(label)) / 2), 24);
+                cell.dispose();
+            }
+            drawColumnLines(g, width, getHeight());
+            g.drawLine(0, getHeight() - 1, getWidth(), getHeight() - 1);
+            g.dispose();
+        }
+    };
     private Point anchor;
     private DayOfWeek dragDay;
     private boolean dragging, suppressClick;
     private Selection selection;
 
-    WeekGrid(TimetableService service, CampusMap map, Editor editor) {
-        this(service, map, (RangeEditor)(event, day, start, end) -> editor.open(event, day, start));
-    }
-    WeekGrid(TimetableService service, CampusMap map, RangeEditor editor) {
+    WeekGrid(TimetableService service, CampusMap map, RangeEditor editor, java.util.function.BooleanSupplier save) {
         this.service=service; this.map=map; this.editor=editor;
+        this.save = save;
         setBackground(Color.WHITE); setToolTipText(""); setFocusable(true); setAutoscrolls(true);
         MouseAdapter mouse = new MouseAdapter() {
             @Override public void mouseClicked(MouseEvent e) {
@@ -78,17 +103,43 @@ final class WeekGrid extends JPanel {
         });
         refresh();
     }
+
+    private final java.util.function.BooleanSupplier save;
+
+    boolean confirmDelete(Component owner, Event event) {
+        String message = event.recurring() ? "이 반복 일정의 모든 요일을 삭제할까요?" : "이 일정을 삭제할까요?";
+        if (JOptionPane.showConfirmDialog(owner, message, "일정 삭제", JOptionPane.YES_NO_OPTION)
+                != JOptionPane.YES_OPTION) return false;
+        service.delete(event);
+        save.getAsBoolean();
+        refresh();
+        return true;
+    }
     private void cancelSelection() {
         anchor=null; dragDay=null; dragging=false; selection=null; repaint();
     }
+
+    JScrollPane scrollPane() {
+        JScrollPane scroll = Theme.scroll(this);
+        scroll.setColumnHeaderView(dateHeader);
+        return scroll;
+    }
+
+    @Override public Dimension getPreferredScrollableViewportSize() { return getPreferredSize(); }
+    @Override public int getScrollableUnitIncrement(Rectangle visible, int orientation, int direction) { return 24; }
+    @Override public int getScrollableBlockIncrement(Rectangle visible, int orientation, int direction) {
+        return Math.max(24, visible.height - 24);
+    }
+    @Override public boolean getScrollableTracksViewportWidth() { return true; }
+    @Override public boolean getScrollableTracksViewportHeight() { return false; }
     private Event hit(Point point) {
         for(var box:boxes.entrySet()) if(box.getKey().contains(point)) return box.getValue();
         return null;
     }
     private boolean inGrid(Point point) {
-        return point.x>=LEFT && point.x<LEFT+7*columnWidth() && point.y>=TOP && point.y<y(LocalTime.MAX);
+        return point.x>=LEFT && point.x<LEFT+7*columnWidth(getWidth()) && point.y>=TOP && point.y<y(LocalTime.MAX);
     }
-    private DayOfWeek dayAt(Point point) { return dayOf((point.x-LEFT)/columnWidth()); }
+    private DayOfWeek dayAt(Point point) { return dayOf((point.x-LEFT)/columnWidth(getWidth())); }
     // 열 순서는 일~토. 0번 열이 일요일이다.
     private static DayOfWeek dayOf(int column) { return DayOfWeek.SUNDAY.plus(column); }
     private static int columnOf(DayOfWeek day) { return day.getValue()%7; }
@@ -110,7 +161,11 @@ final class WeekGrid extends JPanel {
         JPopupMenu menu=new JPopupMenu();
         JMenuItem item=new JMenuItem(selected==null?"일정 추가":"일정 수정");
         item.addActionListener(e->editor.open(selected,day,start,end));
-        menu.add(item); return menu;
+        menu.add(item);
+        if (selected != null) {
+            menu.add(Theme.deleteMenuItem("일정 삭제", () -> confirmDelete(this, selected)));
+        }
+        return menu;
     }
     void refresh() {
         first=Math.min(8,service.visibleEvents().stream().mapToInt(e->e.start().getHour()).min().orElse(8));
@@ -118,6 +173,7 @@ final class WeekGrid extends JPanel {
         boxes.clear();
         cancelSelection();
         setPreferredSize(new Dimension(480,TOP+(last-first)*HOUR+12)); revalidate(); repaint();
+        dateHeader.repaint();
     }
     static List<String> wrap(FontMetrics fm,String value,int width,int maxLines) {
         List<String> lines=new ArrayList<>(); String rest=value.strip();
@@ -138,34 +194,42 @@ final class WeekGrid extends JPanel {
         }
         return "…";
     }
-    private int columnWidth() { return Math.max(1,(getWidth()-LEFT)/7); }
+    private static int columnWidth(int width) { return Math.max(1,(width-LEFT)/7); }
+    private static void drawColumnLines(Graphics2D g, int width, int height) {
+        g.setColor(new Color(225,230,237));
+        for (int column = 0; column <= 7; column++) {
+            int x = LEFT + column * width;
+            g.drawLine(x, 0, x, height);
+        }
+    }
     private int y(LocalTime time) { return TOP+((time.equals(LocalTime.MAX)?1440:time.toSecondOfDay()/60)-first*60)*HOUR/60; }
+
+    private String placeName(Event event) {
+        if (!event.customPlace().isEmpty()) return event.customPlace();
+        var building = map.building(event.buildingId());
+        return building == null ? "" : building.name();
+    }
+
     @Override public String getToolTipText(MouseEvent e) {
         Event v=hit(e.getPoint());
         if(v==null)return "빈 시간대를 위아래로 드래그하여 일정을 추가하세요 (시작 30분·종료 5분 단위, Esc로 취소)";
-        var b=map.building(v.buildingId());
-        return v.title()+" · "+TimePicker.display(v.start())+"–"+TimePicker.display(v.end())+" · "
-                +(b==null?"장소 없음":b.name())+" · "+(v.recurring()?"매주 반복":v.date().toString());
+        String place = placeName(v);
+        String details = v.title()+" · "+TimePicker.display(v.start())+"–"+TimePicker.display(v.end())+" · "
+                +(place.isEmpty()?"장소 없음":place)+(v.recurring()?"":" · "+v.date());
+        return "<html>" + Theme.html(details) + (v.note().isBlank() ? "" : "<br>" + Theme.html(v.note().strip()).replaceAll("\\R", "<br>")) + "</html>";
     }
     @Override protected void paintComponent(Graphics graphics) {
         super.paintComponent(graphics); boxes.clear();
         Graphics2D g=(Graphics2D)graphics.create();
         g.setRenderingHint(RenderingHints.KEY_ANTIALIASING,RenderingHints.VALUE_ANTIALIAS_ON);
-        int width=columnWidth(); String[] labels={"일","월","화","수","목","금","토"};
-        g.setColor(new Color(245,247,251)); g.fillRect(0,0,getWidth(),TOP);
-        g.setColor(new Color(45,55,75));
-        for(int d=0;d<7;d++) {
-            LocalDate date=service.dateFor(dayOf(d));
-            String label=labels[d]+" "+date.getMonthValue()+"/"+date.getDayOfMonth();
-            g.drawString(label,LEFT+d*width+Math.max(2,(width-g.getFontMetrics().stringWidth(label))/2),24);
-        }
+        int width=columnWidth(getWidth());
         for(int hour=first;hour<=last;hour++) {
             int row=TOP+(hour-first)*HOUR;
             g.setColor(new Color(100,110,125)); g.drawString(String.format("%02d:00",hour),5,row+5);
             g.setColor(new Color(220,225,233)); g.drawLine(LEFT,row,getWidth(),row);
             g.setColor(new Color(240,242,246)); g.drawLine(LEFT,row+HOUR/2,getWidth(),row+HOUR/2);
         }
-        for(int d=0;d<=7;d++) {g.setColor(new Color(225,230,237));g.drawLine(LEFT+d*width,0,LEFT+d*width,getHeight());}
+        drawColumnLines(g, width, getHeight());
         for(int d=0;d<7;d++) {
             List<Occurrence> occurrences=service.occurrences(dayOf(d));
             List<LocalTime> ends=new ArrayList<>(); Map<Occurrence,Integer> lanes=new LinkedHashMap<>();
@@ -187,14 +251,18 @@ final class WeekGrid extends JPanel {
                 }
                 Graphics2D text=(Graphics2D)g.create(); text.clip(r);
                 text.setColor(occurrence.canceled()?Color.GRAY:new Color(40,50,70));
-                // 제목은 칸 너비에 맞춰 줄바꿈하고, 시간 한 줄은 남겨 둔다. 넘치는 줄은 …로 줄인다.
+                // 시간, 장소, 메모 공간을 남긴 뒤 제목을 줄바꿈한다.
                 FontMetrics fm=text.getFontMetrics(); int textWidth=r.width-8, rows=Math.max(1,(r.height-3)/16);
-                var b=map.building(e.buildingId());
+                String place=placeName(e);
                 List<String> details=new ArrayList<>(List.of(TimePicker.display(e.start())+"–"+TimePicker.display(e.end())));
-                if(b!=null)details.add(b.name());
-                details.add(e.recurring()?"매주 반복":"이 날짜만");
-                List<String> lines=wrap(fm,(occurrence.canceled()?"[제외] ":"")+e.title(),textWidth,rows>1?rows-1:1);
+                if(!place.isEmpty())details.add(place);
+                boolean hasNote = !e.note().isBlank();
+                int titleRows = Math.max(1, rows-details.size()-(hasNote ? 1 : 0));
+                List<String> lines=wrap(fm,(occurrence.canceled()?"[제외] ":"")+e.title(),textWidth,titleRows);
                 for(String detail:details)if(lines.size()<rows)lines.add(fit(fm,detail,textWidth));
+                if(hasNote && lines.size()<rows) {
+                    lines.addAll(wrap(fm,e.note().replaceAll("\\s+", " "),textWidth,rows-lines.size()));
+                }
                 for(int i=0;i<lines.size();i++)text.drawString(lines.get(i),r.x+5,r.y+16+i*16);
                 text.dispose();
             }

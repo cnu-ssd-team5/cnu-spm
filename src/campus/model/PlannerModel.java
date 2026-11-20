@@ -32,15 +32,33 @@ public final class PlannerModel {
         public String toString() {
             return label;
         }
+
+        public static Category fromLabel(String label) {
+            for (Category category : values()) {
+                if (category.toString().equals(label)) return category;
+            }
+            return OTHER;
+        }
     }
 
     public record Event(String id, String title, String buildingId,
                         LocalTime start, LocalTime end, Category category,
-                        DayOfWeek weekday, LocalDate date, String note) {
+                        DayOfWeek weekday, LocalDate date, String note,
+                        String customCategory, String customPlace) {
+        public static final String CUSTOM_PLACE_ID = "custom-place";
+
+        public Event(String id, String title, String buildingId,
+                     LocalTime start, LocalTime end, Category category,
+                     DayOfWeek weekday, LocalDate date, String note) {
+            this(id, title, buildingId, start, end, category, weekday, date, note, "", "");
+        }
+
         public Event {
             id = requiredText(id, "일정 ID");
             title = requiredText(title, "일정 이름");
-            buildingId = requiredText(buildingId, "건물 ID");
+            customCategory = Objects.requireNonNullElse(customCategory, "").strip();
+            customPlace = Objects.requireNonNullElse(customPlace, "").strip();
+            buildingId = customPlace.isEmpty() ? requiredText(buildingId, "장소") : CUSTOM_PLACE_ID;
             Objects.requireNonNull(start, "시작 시각");
             Objects.requireNonNull(end, "종료 시각");
             Objects.requireNonNull(category, "일정 분류");
@@ -51,6 +69,10 @@ public final class PlannerModel {
                 throw new IllegalArgumentException("반복 요일 또는 일회성 날짜 중 하나를 지정해야 합니다.");
             }
             note = Objects.requireNonNullElse(note, "");
+        }
+
+        public String categoryLabel() {
+            return customCategory.isEmpty() ? category.toString() : customCategory;
         }
 
         public boolean recurring() {
@@ -90,14 +112,35 @@ public final class PlannerModel {
         }
     }
 
+    public enum TaskPriority {
+        HIGH("높음"), NORMAL("보통"), LOW("낮음");
+
+        private final String label;
+        TaskPriority(String label) { this.label = label; }
+        @Override public String toString() { return label; }
+    }
+
     public record Deadline(String id, String title, LocalDate date, String note,
-                           boolean completed, LocalDate completedOn) {
+                           boolean completed, LocalDate completedOn, TaskPriority priority,
+                           LocalDate plannerDate, boolean deadlineLinked) {
         public Deadline {
             id = requiredText(id, "마감 일정 ID");
             title = requiredText(title, "마감 일정 이름");
             Objects.requireNonNull(date, "마감 날짜");
+            Objects.requireNonNull(plannerDate, "플래너 날짜");
+            if (!deadlineLinked) date = plannerDate;
             note = Objects.requireNonNullElse(note, "");
+            priority = Objects.requireNonNullElse(priority, TaskPriority.NORMAL);
             if (!completed) completedOn = null;
+        }
+
+        public Deadline(String id, String title, LocalDate date, String note, boolean completed,
+                        LocalDate completedOn, TaskPriority priority) {
+            this(id, title, date, note, completed, completedOn, priority, date, true);
+        }
+
+        public Deadline(String id, String title, LocalDate date, String note, boolean completed, LocalDate completedOn) {
+            this(id, title, date, note, completed, completedOn, TaskPriority.NORMAL);
         }
 
         public Deadline(String id, String title, LocalDate date, String note, boolean completed) {
@@ -303,7 +346,7 @@ public final class PlannerModel {
     }
 
     public synchronized List<Deadline> deadlines() {
-        return deadlines.values().stream().sorted(Comparator.comparing(Deadline::date)
+        return deadlines.values().stream().filter(Deadline::deadlineLinked).sorted(Comparator.comparing(Deadline::date)
                 .thenComparing(Deadline::completed).thenComparing(Deadline::title)
                 .thenComparing(Deadline::id)).toList();
     }
@@ -311,6 +354,15 @@ public final class PlannerModel {
     public synchronized List<Deadline> deadlines(LocalDate date) {
         Objects.requireNonNull(date, "마감 날짜");
         return deadlines().stream().filter(deadline -> deadline.date().equals(date)).toList();
+    }
+
+    public synchronized List<Deadline> plannerTasks(LocalDate date) {
+        Objects.requireNonNull(date, "플래너 날짜");
+        return deadlines.values().stream().filter(task -> task.plannerDate().equals(date)).toList();
+    }
+
+    synchronized List<Deadline> allTasks() {
+        return List.copyOf(deadlines.values());
     }
 
     public synchronized void putDeadline(Deadline deadline) {
@@ -327,7 +379,8 @@ public final class PlannerModel {
         if (deadline == null) throw new IllegalArgumentException("마감 일정을 찾을 수 없습니다.");
         boolean completed = !deadline.completed();
         deadlines.put(deadline.id(), new Deadline(deadline.id(), deadline.title(), deadline.date(),
-                deadline.note(), completed, completed ? PlannerTime.today() : null));
+                deadline.note(), completed, completed ? PlannerTime.today() : null, deadline.priority(),
+                deadline.plannerDate(), deadline.deadlineLinked()));
     }
 
     /** Merge a shared planner without replacing existing personal records. */
@@ -347,7 +400,7 @@ public final class PlannerModel {
             sharedEvents = incoming.events();
             sharedSemesters = incoming.eventSemesters();
             sharedPins = incoming.pins();
-            sharedDeadlines = incoming.deadlines();
+            sharedDeadlines = incoming.allTasks();
             sharedNames = incoming.buildingNames();
             sharedFavorites = incoming.favorites();
             sharedCancellations = incoming.cancellations();
@@ -410,7 +463,7 @@ public final class PlannerModel {
 
     private static Event copyEvent(Event event, String id, String placeId) {
         return new Event(id, event.title(), placeId, event.start(), event.end(), event.category(),
-                event.weekday(), event.date(), event.note());
+                event.weekday(), event.date(), event.note(), event.customCategory(), event.customPlace());
     }
 
     private record SharedGroup(String root, Semester semester) { }
@@ -445,7 +498,9 @@ public final class PlannerModel {
                 if (sameRoot != null && proposed.stream().allMatch(event -> sameRoot.stream().allMatch(old ->
                         event.title().equals(old.title()) && event.buildingId().equals(old.buildingId())
                         && event.start().equals(old.start()) && event.end().equals(old.end())
-                        && event.category() == old.category() && event.note().equals(old.note())))) {
+                        && event.category() == old.category() && event.note().equals(old.note())
+                        && event.customCategory().equals(old.customCategory())
+                        && event.customPlace().equals(old.customPlace())))) {
                     targetRoot = entry.getKey().root();
                 }
             }
@@ -478,7 +533,8 @@ public final class PlannerModel {
 
     private static Deadline copyDeadline(Deadline deadline, String id) {
         return new Deadline(id, deadline.title(), deadline.date(), deadline.note(),
-                deadline.completed(), deadline.completedOn());
+                deadline.completed(), deadline.completedOn(), deadline.priority(),
+                deadline.plannerDate(), deadline.deadlineLinked());
     }
 
     synchronized Set<Cancellation> cancellations() {
