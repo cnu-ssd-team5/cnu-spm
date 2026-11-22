@@ -15,7 +15,7 @@ import javax.swing.*;
 public final class TimeToolsPanel extends JPanel implements AutoCloseable {
     private static final DateTimeFormatter CLOCK = DateTimeFormatter.ofPattern("HH:mm:ss");
     private final CountdownTimer countdown;
-    private final PlannerModel model;
+    private PlannerModel model;
     private final Consumer<String> notify;
     private final JLabel clock = Theme.label(" ", 15, Theme.INK);
     private final JLabel remaining = Theme.heading("25:00", 26);
@@ -121,6 +121,11 @@ public final class TimeToolsPanel extends JPanel implements AutoCloseable {
         window.tick();
         window.setVisible(true);
         window.toFront();
+    }
+
+    void setScheduleModel(PlannerModel model) {
+        this.model = model;
+        if (window != null) window.setScheduleModel(model);
     }
 
     void refreshSchedule(LocalDate selectedDate) {

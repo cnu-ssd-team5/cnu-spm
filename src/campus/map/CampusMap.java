@@ -60,6 +60,29 @@ public final class CampusMap {
         osmWays = source.ways;
     }
 
+    private CampusMap(CampusMap source) {
+        nodes = source.nodes;
+        osmWays = source.osmWays;
+        ways.addAll(source.ways);
+        buildingRefs.putAll(source.buildingRefs);
+        obstacles.addAll(source.obstacles);
+        originalNames.putAll(source.originalNames);
+        boundary = source.boundary;
+        minLat = source.minLat;
+        maxLat = source.maxLat;
+        minLon = source.minLon;
+        maxLon = source.maxLon;
+        extractBounds = source.extractBounds;
+        for (Building place : source.buildings) {
+            if (!place.id().startsWith("pin:")) {
+                putPlace(new Building(place.id(), source.originalName(place.id()), place.outline(), place.center()));
+            }
+        }
+    }
+
+    /** 사용자 핀과 이름 변경을 제외한 장소 사본. OSM 원본 데이터는 공유한다. */
+    public CampusMap copyBasePlaces() { return new CampusMap(this); }
+
     /** 프로그램에 포함된 전남대 지도(resources/map)를 읽습니다. 실행 위치와 상관없이 동작합니다. */
     public static CampusMap loadBundled() throws IOException {
         try (InputStream input = CampusMap.class.getResourceAsStream(BUNDLED_OSM)) {

@@ -21,13 +21,15 @@ final class DailyPlannerPanel extends JPanel {
     private static final Color ACTIVE_TEXT = new Color(0x17191C);
     private static final Color COMPLETE_TEXT = new Color(0x707B89);
     private final MainFrame frame;
-    private final PlannerModel model;
+    private PlannerModel model;
     private final JLabel dateLabel = Theme.heading(" ", 16);
     private final JLabel weatherLabel = Theme.label("", 11, Theme.MUTED);
     private final JLabel taskCount = Theme.label(" ", 12, Theme.MUTED);
     private final JLabel deadlineCount = Theme.label(" ", 11, Theme.MUTED);
     private final JPanel deadlineRows = Theme.transparent(new GridLayout(0, 1, 0, 6));
     private final JButton addTask;
+    private final JButton addDeadline = Theme.button("+ 추가", false, this::addDeadline);
+    private boolean readOnly;
     private final JTextArea memo = new JTextArea();
     private final JPanel tasks = new JPanel(new GridBagLayout()) {
         @Override public Dimension getPreferredSize() {
@@ -85,6 +87,16 @@ final class DailyPlannerPanel extends JPanel {
         add(columns, BorderLayout.CENTER);
     }
 
+    private void addDeadline() { frame.editDeadline(null, date, true); }
+
+    void setScheduleContext(PlannerModel model, boolean readOnly) {
+        this.model = model;
+        this.readOnly = readOnly;
+        addTask.setVisible(!readOnly);
+        addDeadline.setVisible(!readOnly);
+        memo.setEditable(!readOnly);
+    }
+
     void refresh(LocalDate selectedDate) {
         refresh(selectedDate, null);
     }
@@ -132,7 +144,6 @@ final class DailyPlannerPanel extends JPanel {
         heading.add(Theme.heading("과제·할일 마감", 15), BorderLayout.CENTER);
         JPanel tools = Theme.transparent(new FlowLayout(FlowLayout.RIGHT, 4, 0));
         tools.add(deadlineCount);
-        JButton addDeadline = Theme.button("+ 추가", false, () -> frame.editDeadline(null, date, true));
         addDeadline.getAccessibleContext().setAccessibleName("과제·할일 마감 추가");
         tools.add(addDeadline);
         heading.add(tools, BorderLayout.EAST);
@@ -183,6 +194,8 @@ final class DailyPlannerPanel extends JPanel {
         item.setForeground(deadline.completed() ? Theme.MUTED : days == 0 ? Theme.TODAY_TEXT : Theme.INK);
         JCheckBox complete = new JCheckBox();
         complete.setSelected(deadline.completed());
+        complete.setEnabled(!readOnly);
+        item.setEnabled(!readOnly);
         complete.setOpaque(false);
         complete.setToolTipText("완료 상태 변경");
         complete.getAccessibleContext().setAccessibleName(deadline.title() + " 완료");
@@ -227,6 +240,7 @@ final class DailyPlannerPanel extends JPanel {
         checkbox.putClientProperty("html.disable", true);
         checkbox.setText(task.title());
         checkbox.setSelected(task.completed());
+        checkbox.setEnabled(!readOnly);
         checkbox.setName("daily-task:" + task.id());
         checkbox.setToolTipText("<html>" + Theme.html(task.title()) + "</html>");
         checkbox.setFont(Theme.font(13, Font.BOLD));
@@ -246,7 +260,7 @@ final class DailyPlannerPanel extends JPanel {
         JPanel details = Theme.transparent(new BorderLayout(0, 5));
         JPanel meta = Theme.transparent(new BorderLayout(4, 0));
         meta.add(priorityBadge(task.priority(), task.completed()), BorderLayout.WEST);
-        meta.add(actions, BorderLayout.EAST);
+        if (!readOnly) meta.add(actions, BorderLayout.EAST);
         details.add(meta, BorderLayout.NORTH);
         if (!task.note().isBlank()) {
             String escaped = Theme.html("#" + task.note().strip()).replaceAll("\\R", "<br>");
@@ -282,7 +296,7 @@ final class DailyPlannerPanel extends JPanel {
     }
 
     private void saveMemo() {
-        if (refreshing || date == null) return;
+        if (readOnly || refreshing || date == null) return;
         model.setDayNote(date, memo.getText());
         frame.noteChanged();
     }

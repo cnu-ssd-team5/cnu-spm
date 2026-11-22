@@ -40,9 +40,21 @@ import org.xml.sax.helpers.DefaultHandler;
 public final class PlannerStore {
     private PlannerStore() { }
 
+    public record NamedSchedule(String name, PlannerModel model) { }
+
     public static PlannerModel load(Path path) throws IOException {
+        return read(path).model();
+    }
+
+    public static NamedSchedule loadFriendSchedule(Path path) throws IOException {
+        NamedSchedule schedule = read(path);
+        if (schedule.name().isBlank()) throw new IOException("친구 이름이 없는 일정 파일입니다.");
+        return schedule;
+    }
+
+    private static NamedSchedule read(Path path) throws IOException {
         if (Files.notExists(path)) {
-            return new PlannerModel();
+            return new NamedSchedule("", new PlannerModel());
         }
         try (InputStream input = Files.newInputStream(path)) {
             Document document = newBuilder().parse(input);
@@ -140,21 +152,25 @@ public final class PlannerStore {
                         priority.isEmpty() ? PlannerModel.TaskPriority.NORMAL : PlannerModel.TaskPriority.valueOf(priority),
                         plannerDate.isEmpty() ? date : LocalDate.parse(plannerDate), !"false".equals(deadlineLinked)));
             }
-            return model;
+            return new NamedSchedule(root.getAttribute("friend"), model);
         } catch (ParserConfigurationException | SAXException | RuntimeException exception) {
             throw new IOException("개인 일정 파일을 읽을 수 없습니다. 기존 파일을 확인해 주세요.", exception);
         }
     }
 
     public static void save(Path path, PlannerModel model) throws IOException {
-        save(path, model, true);
+        save(path, model, true, "");
     }
 
     public static void saveSharedSchedule(Path path, PlannerModel model) throws IOException {
-        save(path, model, false);
+        save(path, model, false, "");
     }
 
-    private static void save(Path path, PlannerModel model, boolean includeBuildingNotes) throws IOException {
+    public static void saveFriendSchedule(Path path, NamedSchedule schedule) throws IOException {
+        save(path, schedule.model(), false, schedule.name());
+    }
+
+    private static void save(Path path, PlannerModel model, boolean includeBuildingNotes, String friend) throws IOException {
         Document document;
         try {
             document = newBuilder().newDocument();
@@ -163,6 +179,7 @@ public final class PlannerStore {
         }
         Element root = document.createElement("campus-planner");
         root.setAttribute("version", "3");
+        if (!friend.isBlank()) root.setAttribute("friend", friend);
         document.appendChild(root);
         // Capture schedules and their exceptions from the same consistent model state.
         synchronized (model) {

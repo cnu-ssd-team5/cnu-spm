@@ -234,7 +234,7 @@ final class MapPanel extends JPanel {
 
     @Override public String getToolTipText(MouseEvent event) {
         List<Occurrence> scheduled=scheduledAt(event.getPoint());
-        if(!scheduled.isEmpty())return "자료함 열기 · "+scheduled.stream().map(o->o.event().title()).collect(java.util.stream.Collectors.joining(" / "));
+        if(!scheduled.isEmpty())return (occurrenceOpener == null ? "" : "자료함 열기 · ")+scheduled.stream().map(o->o.event().title()).collect(java.util.stream.Collectors.joining(" / "));
         Building building = hit(event.getPoint());
         return building==null?null:folders==null?building.name():folders.folderTooltip(building);
     }

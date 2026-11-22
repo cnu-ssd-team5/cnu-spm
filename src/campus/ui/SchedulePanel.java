@@ -20,8 +20,10 @@ final class SchedulePanel {
     private static final DateTimeFormatter DAY = DateTimeFormatter.ofPattern("M월 d일 EEEE", Locale.KOREAN);
     final JPanel panel = Theme.transparent(new BorderLayout(0,14));
     private final MainFrame frame;
-    private final CampusMap data;
-    private final PlannerModel model;
+    private CampusMap data;
+    private boolean readOnly;
+    private final JButton addEvent;
+    private PlannerModel model;
     private final JLabel dayTitle = Theme.heading(" ", 16);
     private final JLabel daySummary = Theme.label(" ", 12, Theme.MUTED);
     private final JPanel schedule = new JPanel(new GridBagLayout()) {
@@ -38,7 +40,7 @@ final class SchedulePanel {
         JPanel title = Theme.transparent(new GridLayout(2,1,0,5));
         JPanel dateRow = Theme.transparent(new BorderLayout(5,0));
         dateRow.add(dayTitle,BorderLayout.CENTER);
-        JButton addEvent = Theme.button("일정 추가",false,() -> frame.edit(null,false));
+        addEvent = Theme.button("일정 추가",false,() -> frame.edit(null,false));
         addEvent.setFont(Theme.font(11,Font.BOLD));
         addEvent.setBorder(BorderFactory.createEmptyBorder(8,8,8,8));
         dateRow.add(addEvent,BorderLayout.EAST);
@@ -48,6 +50,13 @@ final class SchedulePanel {
         schedule.setOpaque(false);
         eventsCard.add(Theme.scroll(schedule),BorderLayout.CENTER);
         panel.add(eventsCard,BorderLayout.CENTER);
+    }
+
+    void setScheduleContext(CampusMap data, PlannerModel model, boolean readOnly) {
+        this.data = data;
+        this.model = model;
+        this.readOnly = readOnly;
+        addEvent.setVisible(!readOnly);
     }
 
     void refresh(LocalDate date, List<Occurrence> occurrences, List<Leg> legs) {
@@ -72,7 +81,7 @@ final class SchedulePanel {
             JPanel empty = Theme.transparent(new GridLayout(0,1,0,8));
             empty.setBorder(BorderFactory.createEmptyBorder(12,4,8,4));
             empty.add(Theme.heading("등록된 일정이 없습니다.",14));
-            empty.add(Theme.label("날짜 옆 일정 추가로 등록하세요.",11,Theme.MUTED));
+            if (!readOnly) empty.add(Theme.label("날짜 옆 일정 추가로 등록하세요.",11,Theme.MUTED));
             schedule.add(empty,c);
             c.gridy++;
         }
@@ -152,6 +161,7 @@ final class SchedulePanel {
             details.add(note,c);
         }
         card.add(details,BorderLayout.CENTER);
+        if (readOnly) return card;
         JPanel actions=Theme.transparent(new FlowLayout(FlowLayout.RIGHT,6,0));
         actions.add(Theme.button("편집",false,() -> frame.edit(event,event.recurring())));
         String cancelLabel=canceled ? "복원" : event.category()==PlannerModel.Category.CLASS ? "휴강" : "오늘 제외";

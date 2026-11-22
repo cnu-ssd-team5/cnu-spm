@@ -21,7 +21,8 @@ import campus.model.PlannerModel.Deadline;
 public final class CalendarPanel extends JPanel {
     private static final Color DUE_COLOR = new Color(196, 54, 54);
     private static final Color CELL_LINE = new Color(145, 161, 183);
-    private final PlannerModel model;
+    private PlannerModel model;
+    private boolean showEventTitles;
     private final Consumer<LocalDate> onDateSelect;
     private final Consumer<LocalDate> onOpenPlanner;
     private final Consumer<Semester> onSemesterSelect;
@@ -143,6 +144,11 @@ public final class CalendarPanel extends JPanel {
             weather = forecast;
             refresh(selectedDate, selectedSemester);
         }
+    }
+
+    public void setScheduleContext(PlannerModel model, boolean showEventTitles) {
+        this.model = model;
+        this.showEventTitles = showEventTitles;
     }
 
     public void refresh(LocalDate date) { refresh(date, Semester.forDate(date)); }
@@ -321,7 +327,9 @@ public final class CalendarPanel extends JPanel {
         });
         dateRow.add(day, BorderLayout.WEST);
         List<Deadline> deadlines = model.deadlines(date);
-        long scheduled = model.occurrences(date).stream().filter(o -> !o.canceled()).count() + deadlines.size();
+        var occurrences = model.occurrences(date);
+        var active = occurrences.stream().filter(o -> !o.canceled()).toList();
+        long scheduled = active.size() + deadlines.size();
         if (scheduled > 0) dateRow.add(Theme.label(scheduled + "개", 10, Theme.MUTED), BorderLayout.EAST);
         cell.add(dateRow, BorderLayout.NORTH);
 
@@ -331,7 +339,7 @@ public final class CalendarPanel extends JPanel {
             holidayLabel.setToolTipText(holiday);
             assignments.add(holidayLabel);
         }
-        List<PlannerModel.Occurrence> canceled = model.occurrences(date).stream().filter(PlannerModel.Occurrence::canceled).toList();
+        List<PlannerModel.Occurrence> canceled = occurrences.stream().filter(PlannerModel.Occurrence::canceled).toList();
         if (!canceled.isEmpty()) {
             String state = canceled.get(0).event().category() == PlannerModel.Category.CLASS ? "휴강" : "제외";
             JLabel cancellation = Theme.label(state + " · " + canceled.get(0).event().title()
@@ -348,6 +356,19 @@ public final class CalendarPanel extends JPanel {
         }
         for (Deadline deadline : deadlines) {
             detail.append("<br>").append(Theme.html(deadline.title())).append(" · ").append(status(deadline));
+        }
+        if (showEventTitles) {
+            for (var occurrence : active) {
+                var event = occurrence.event();
+                detail.append("<br>").append(event.start()).append("–").append(event.end()).append(" · ")
+                        .append(Theme.html(event.title()));
+                if (assignments.getComponentCount() < 2) {
+                    JLabel title = Theme.label("", 11, Theme.BLUE);
+                    title.putClientProperty("html.disable", true);
+                    title.setText(event.title());
+                    assignments.add(title);
+                }
+            }
         }
         detail.append("<br>더블클릭 또는 Enter로 플래너 열기");
         String tooltip = detail.append("</html>").toString();

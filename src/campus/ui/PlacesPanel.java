@@ -16,8 +16,8 @@ import campus.model.PlannerModel;
 final class PlacesPanel {
     final JPanel panel = Theme.card(new BorderLayout(0, 12));
     private final MainFrame frame;
-    private final CampusMap data;
-    private final PlannerModel model;
+    private CampusMap data;
+    private PlannerModel model;
     private final JTextField search = new JTextField();
     private final JCheckBox favoritesOnly = new JCheckBox("즐겨찾기만 보기");
     private final DefaultListModel<Building> buildingItems = new DefaultListModel<>();
@@ -65,7 +65,7 @@ final class PlacesPanel {
             @Override public Component getListCellRendererComponent(JList<?> list,Object value,int index,boolean selected,boolean focus) {
                 JLabel label = (JLabel)super.getListCellRendererComponent(list,value,index,selected,focus);
                 Building b = (Building)value;
-                label.setText((model.isFavorite(b.id()) ? "★  " : "    ") + b.name());
+                label.setText((PlacesPanel.this.model.isFavorite(b.id()) ? "★  " : "    ") + b.name());
                 label.setFont(Theme.font(12,Font.PLAIN));
                 label.setBorder(BorderFactory.createEmptyBorder(0,6,0,4));
                 label.setBackground(selected ? Theme.PALE_BLUE : Color.WHITE);
@@ -111,6 +111,12 @@ final class PlacesPanel {
         });
     }
 
+    void setScheduleContext(CampusMap data, PlannerModel model, boolean readOnly) {
+        this.data = data;
+        this.model = model;
+        favoriteButton.setVisible(!readOnly);
+    }
+
     void refresh() {
         refreshBuildings();
         updateSelectedBuilding();
@@ -130,7 +136,12 @@ final class PlacesPanel {
         Building selectedBuilding=frame.selectedBuilding();
         boolean selected=selectedBuilding!=null;
         favoriteButton.setEnabled(selected);
-        if(!selected)return;
+        if (!selected) {
+            selectedName.setText("지도에서 건물을 선택하세요");
+            selectedName.setToolTipText(null);
+            selectedDetail.setText(" ");
+            return;
+        }
         selectedName.setText(selectedBuilding.name());
         selectedName.setToolTipText(selectedBuilding.name());
         selectedDetail.setText(selectedBuilding.name().replace(" ","").startsWith("이름없는")?" ":selectedBuilding.id().startsWith("bus:")?"정류장":selectedBuilding.id().startsWith("pin:")?"사용자 핀":" ");

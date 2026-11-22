@@ -15,8 +15,10 @@ import java.util.function.BooleanSupplier;
 
 /** 선택한 주의 일정 보기 및 일회성/여러 요일 반복 일정 편집. */
 public final class TimetablePanel extends JPanel {
-    private final CampusMap map;
-    private final PlannerModel model;
+    private CampusMap map;
+    private PlannerModel model;
+    private boolean readOnly;
+    private final JScrollPane scroll;
     private final TimetableService service;
     private final BooleanSupplier save;
     private final WeekGrid grid;
@@ -25,23 +27,41 @@ public final class TimetablePanel extends JPanel {
         grid=new WeekGrid(service,map,this::edit,save);
         JPanel bar=Theme.transparent(new BorderLayout(10,0));
         bar.add(period,BorderLayout.CENTER);
-        bar.add(Theme.label("빈 시간대 드래그로 추가 · 일정 더블클릭으로 편집 · 우클릭으로 수정·삭제 선택",11,Theme.MUTED),BorderLayout.SOUTH);
+        bar.add(editHint, BorderLayout.SOUTH);
         add(bar,BorderLayout.NORTH);
-        add(grid.scrollPane(), BorderLayout.CENTER);
+        scroll = grid.scrollPane();
+        add(scroll, BorderLayout.CENTER);
     }
     private LocalDate selectedDate = campus.calendar.PlannerTime.today();
+    private final JLabel editHint = Theme.label("빈 시간대 드래그로 추가 · 일정 더블클릭으로 편집 · 우클릭으로 수정·삭제 선택", 11, Theme.MUTED);
+
+    public void setScheduleContext(CampusMap map, PlannerModel model, boolean readOnly) {
+        this.map = map;
+        this.model = model;
+        this.readOnly = readOnly;
+        service.setModel(model);
+        grid.setScheduleContext(map, readOnly);
+        editHint.setVisible(!readOnly);
+    }
+
+    public void linkVerticalScroll(TimetablePanel other) {
+        scroll.getVerticalScrollBar().setModel(other.scroll.getVerticalScrollBar().getModel());
+    }
+
     private final JLabel period=Theme.heading("주간 시간표",17);
     public void refresh(campus.calendar.Semester semester) {
         refresh(semester.start());
     }
-    public void refresh(LocalDate date) {
+    public void refresh(LocalDate date) { refresh(date, 8); }
+
+    public void refresh(LocalDate date, int earliestHour) {
         selectedDate = date;
         service.weekOf(date);
         LocalDate sunday = TimetableService.sunday(date);
         period.setText("주간 시간표 · " + campus.calendar.Semester.forDate(date) + " · "
                 + sunday.getMonthValue() + "/" + sunday.getDayOfMonth() + "–"
                 + sunday.plusDays(6).getMonthValue() + "/" + sunday.plusDays(6).getDayOfMonth());
-        grid.refresh();
+        grid.refresh(earliestHour);
     }
     /** 우측 날짜 버튼과 지도에서 사용하는 공통 일정 등록창. */
     public void addEvent(LocalDate date, CampusMap.Building initialPlace) {
@@ -55,6 +75,7 @@ public final class TimetablePanel extends JPanel {
         edit(original,day,time,selectedEnd,null);
     }
     private void edit(Event original,DayOfWeek day,LocalTime time,LocalTime selectedEnd,CampusMap.Building initialPlace) {
+        if (readOnly) return;
         JDialog dialog=new JDialog(SwingUtilities.getWindowAncestor(this),original==null?"일정 추가":"일정 편집",Dialog.ModalityType.APPLICATION_MODAL);
         JTextField title=new JTextField(original==null?"":original.title());
         TimePicker start=new TimePicker(false); start.setTime(original==null?time:original.start());

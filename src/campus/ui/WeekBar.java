@@ -21,11 +21,13 @@ import campus.weather.WeatherBadge;
 final class WeekBar {
     final JPanel panel = Theme.card(new BorderLayout(0, 13));
     private final MainFrame frame;
-    private final PlannerModel model;
+    private PlannerModel model;
     private final JLabel weekTitle = Theme.heading(" ", 19);
     private final JPanel weekDays = Theme.transparent(new GridLayout(1, 7, 8, 0));
     private Map<LocalDate, Day> weather = Map.of();
     private LocalDate displayedSunday;
+
+    void setScheduleModel(PlannerModel model) { this.model = model; }
 
     WeekBar(MainFrame frame, PlannerModel model) {
         this.frame = frame;

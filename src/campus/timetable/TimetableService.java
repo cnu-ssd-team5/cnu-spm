@@ -10,7 +10,7 @@ import java.util.*;
 
 /** 여러 요일을 기존 Event 여러 개로 저장하여 지도·휴강·XML 형식을 유지한다. */
 public final class TimetableService {
-    private final PlannerModel model;
+    private PlannerModel model;
     private Semester semester;
     private LocalDate weekStart;
     public void weekOf(LocalDate date) {
@@ -49,6 +49,7 @@ public final class TimetableService {
     }
     public void semester(Semester value) { semester=value; }
     public TimetableService(PlannerModel model) { this.model=model; }
+    void setModel(PlannerModel model) { this.model = model; }
     public List<Event> events() { return (semester==null?model.events():model.events(semester)).stream().filter(Event::recurring).toList(); }
     public List<Event> group(Event event) {
         if(event==null)return List.of();

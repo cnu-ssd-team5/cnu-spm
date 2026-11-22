@@ -19,10 +19,15 @@ public final class ScheduleSharing {
         PlannerStore.saveSharedSchedule(path,model);
     }
     public static boolean importFile(Component owner,PlannerModel model) throws IOException {
-        JFileChooser chooser=chooser();
-        if(chooser.showOpenDialog(owner)!=JFileChooser.APPROVE_OPTION)return false;
-        PlannerModel incoming=PlannerStore.load(chooser.getSelectedFile().toPath());
-        model.mergeFrom(incoming);return true;
+        PlannerModel incoming = readFile(owner);
+        if (incoming == null) return false;
+        model.mergeFrom(incoming);
+        return true;
+    }
+    public static PlannerModel readFile(Component owner) throws IOException {
+        JFileChooser chooser = chooser();
+        if (chooser.showOpenDialog(owner) != JFileChooser.APPROVE_OPTION) return null;
+        return PlannerStore.load(chooser.getSelectedFile().toPath());
     }
     private static JFileChooser chooser() {
         JFileChooser chooser=new JFileChooser();chooser.setFileFilter(new FileNameExtensionFilter("일정 XML","xml"));return chooser;

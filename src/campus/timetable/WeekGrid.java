@@ -16,7 +16,8 @@ final class WeekGrid extends JPanel implements Scrollable {
     interface RangeEditor { void open(Event event, DayOfWeek day, LocalTime start, LocalTime end); }
     record Selection(DayOfWeek day, LocalTime start, LocalTime end) { }
     private final TimetableService service;
-    private final CampusMap map;
+    private CampusMap map;
+    private boolean readOnly;
     private final RangeEditor editor;
     private final Map<Rectangle,Event> boxes = new LinkedHashMap<>();
     private int first = 8, last = 24;
@@ -59,6 +60,7 @@ final class WeekGrid extends JPanel implements Scrollable {
         setBackground(Color.WHITE); setToolTipText(""); setFocusable(true); setAutoscrolls(true);
         MouseAdapter mouse = new MouseAdapter() {
             @Override public void mouseClicked(MouseEvent e) {
+                if (readOnly) return;
                 if (suppressClick) { suppressClick=false; return; }
                 if (SwingUtilities.isLeftMouseButton(e) && e.getClickCount()==2) {
                     JPopupMenu menu=menuAt(e.getPoint());
@@ -66,6 +68,7 @@ final class WeekGrid extends JPanel implements Scrollable {
                 }
             }
             @Override public void mousePressed(MouseEvent e) {
+                if (readOnly) return;
                 if (e.isPopupTrigger()) { popup(e); return; }
                 if (!SwingUtilities.isLeftMouseButton(e)) return;
                 suppressClick=false;
@@ -82,6 +85,7 @@ final class WeekGrid extends JPanel implements Scrollable {
                 repaint();
             }
             @Override public void mouseReleased(MouseEvent e) {
+                if (readOnly) return;
                 if (e.isPopupTrigger()) { cancelSelection(); popup(e); return; }
                 if (!SwingUtilities.isLeftMouseButton(e) || anchor==null) return;
                 Selection chosen=dragging?selectionBetween(dragDay,anchor.y,e.getY()):null;
@@ -167,8 +171,15 @@ final class WeekGrid extends JPanel implements Scrollable {
         }
         return menu;
     }
-    void refresh() {
-        first=Math.min(8,service.visibleEvents().stream().mapToInt(e->e.start().getHour()).min().orElse(8));
+    void setScheduleContext(CampusMap map, boolean readOnly) {
+        this.map = map;
+        this.readOnly = readOnly;
+    }
+
+    void refresh() { refresh(8); }
+
+    void refresh(int earliestHour) {
+        first = Math.min(earliestHour, service.visibleEvents().stream().mapToInt(e -> e.start().getHour()).min().orElse(8));
         last=24;
         boxes.clear();
         cancelSelection();

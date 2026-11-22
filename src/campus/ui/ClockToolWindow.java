@@ -16,7 +16,7 @@ import javax.swing.plaf.basic.BasicTabbedPaneUI;
 final class ClockToolWindow extends JDialog {
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("yyyy.MM.dd (E)", Locale.KOREAN);
     private static final DateTimeFormatter CLOCK = DateTimeFormatter.ofPattern("a h:mm:ss", Locale.KOREAN);
-    private final PlannerModel model;
+    private PlannerModel model;
     private final ScheduleClock face = new ScheduleClock();
     private final JLabel clock = Theme.heading(" ", 26);
     private final JLabel dateLabel = Theme.label(" ", 12, Theme.INK);
@@ -124,6 +124,8 @@ final class ClockToolWindow extends JDialog {
     private void followCurrentPeriod() {
         (PlannerTime.now().getHour() >= 12 ? afternoon : morning).setSelected(true);
     }
+
+    void setScheduleModel(PlannerModel model) { this.model = model; }
 
     void refreshSchedule() { face.showSchedule(model.occurrences(date), afternoon.isSelected()); }
 

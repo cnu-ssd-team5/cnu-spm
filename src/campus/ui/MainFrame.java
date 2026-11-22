@@ -12,6 +12,10 @@ import java.util.Map;
 import java.util.concurrent.ExecutionException;
 import javax.swing.*;
 import javax.swing.plaf.LayerUI;
+import campus.friends.FriendsDialog;
+import campus.friends.FriendSchedules;
+import campus.friends.FriendSchedules.Friend;
+import campus.friends.ScheduleComparison;
 import campus.map.CampusMap;
 import campus.map.CampusMap.Building;
 import campus.map.RouteService;
@@ -27,6 +31,7 @@ import campus.calendar.*;
 import campus.places.PlaceService;
 import campus.sharing.ScheduleSharing;
 import campus.timetable.TimetablePanel;
+import campus.timetable.TimetableService;
 import campus.materials.CourseMaterialsPanel;
 import campus.weather.WeatherForecast;
 
@@ -34,7 +39,8 @@ import campus.weather.WeatherForecast;
 public final class MainFrame extends JFrame {
     private static final DateTimeFormatter CLOCK = DateTimeFormatter.ofPattern("HH:mm");
     private static final String PLANNER_VIEW = "플래너";
-    private static final List<String> VIEW_ORDER = List.of("지도", PLANNER_VIEW, "주간시간표", "달력", "과목자료");
+    private static final String MATERIALS_VIEW = "과목자료";
+    private static final List<String> VIEW_ORDER = List.of("지도", PLANNER_VIEW, "주간시간표", "달력", MATERIALS_VIEW);
     private final CampusMap data;
     private final RouteService routes;
     private final DayPlanService plans;
@@ -42,10 +48,27 @@ public final class MainFrame extends JFrame {
     private final Path statePath;
     private final MapPanel map;
     private final PlaceService placeService;
+    private final FriendSchedules friendSchedules;
+    private FriendsDialog friendsDialog;
+    private Friend activeFriend;
+    private Friend comparedFriend;
+    private CampusMap friendPlaces;
+    private RouteService friendRoutes;
+    private DayPlanService friendPlans;
+    private MapPanel friendMap;
+    private final JPanel mapCanvas = Theme.transparent(new BorderLayout());
+    private final JLabel friendStatus = Theme.heading("", 20);
+    private final JPanel friendBanner = Theme.transparent(new BorderLayout(8, 0));
+    private final JButton shareButton = Theme.button("일정 공유", false, this::showSharingDialog);
+    private JButton fileSearch;
+    private String lastScheduleView = "지도";
     private final CardLayout viewLayout=new CardLayout();
     private final JPanel views=new JPanel(viewLayout);
     private final TimetablePanel timetable;
     private final CalendarPanel calendar;
+    private final TimetablePanel ownTimetableComparison, friendTimetableComparison;
+    private final CalendarPanel ownCalendarComparison, friendCalendarComparison;
+    private final ScheduleComparison timetableView, calendarView;
     private final CourseMaterialsPanel materials;
     private final DailyPlannerPanel dailyPlanner;
     private final JButton previousView = viewArrow(-1);
@@ -86,6 +109,7 @@ public final class MainFrame extends JFrame {
         this.plans = new DayPlanService(data, routes);
         this.model = model;
         this.statePath = statePath;
+        friendSchedules = new FriendSchedules(statePath.resolveSibling("friends"));
         placeService=new PlaceService(data,model,routes);
         placeService.sync();
         map = new MapPanel(data, model, this::selectBuilding);
@@ -105,6 +129,17 @@ public final class MainFrame extends JFrame {
         map.setPinCreator(this::addPin);
         timetable=new TimetablePanel(data,model,this::saveChanged);
         calendar=new CalendarPanel(model,this::changeDate,this::openPlanner);
+        ownTimetableComparison = new TimetablePanel(data, model, () -> false);
+        ownTimetableComparison.setScheduleContext(data, model, true);
+        friendTimetableComparison = new TimetablePanel(data, model, () -> false);
+        friendTimetableComparison.linkVerticalScroll(ownTimetableComparison);
+        ownCalendarComparison = new CalendarPanel(model, this::changeDate, date -> openComparedPlanner(null, date));
+        ownCalendarComparison.setScheduleContext(model, true);
+        friendCalendarComparison = new CalendarPanel(model, this::changeDate, date -> openComparedPlanner(comparedFriend, date));
+        timetableView = new ScheduleComparison(timetable, ownTimetableComparison, friendTimetableComparison,
+                this::chooseComparison, () -> setComparison(null));
+        calendarView = new ScheduleComparison(calendar, ownCalendarComparison, friendCalendarComparison,
+                this::chooseComparison, () -> setComparison(null));
         materials=new CourseMaterialsPanel(model,data,folders);
         dailyPlanner=new DailyPlannerPanel(this,model);
         week = new WeekBar(this, model);
@@ -146,9 +181,9 @@ public final class MainFrame extends JFrame {
         JPanel workspace = Theme.transparent(new BorderLayout(10, 0));
         views.setOpaque(false);
         views.add(mapCard(),"지도");
-        views.add(viewCard(timetable),"주간시간표");
-        views.add(viewCard(calendar),"달력");
-        views.add(viewCard(materials),"과목자료");
+        views.add(viewCard(timetableView),"주간시간표");
+        views.add(viewCard(calendarView),"달력");
+        views.add(viewCard(materials),MATERIALS_VIEW);
         views.add(viewCard(dailyPlanner),PLANNER_VIEW);
         workspace.add(viewSwitcher(), BorderLayout.CENTER);
         daily.panel.setPreferredSize(new Dimension(285, 0));
@@ -159,8 +194,12 @@ public final class MainFrame extends JFrame {
         JPanel footer = Theme.transparent(new BorderLayout());
         footer.add(notificationStatus,BorderLayout.CENTER);
         JPanel storage=Theme.transparent(new FlowLayout(FlowLayout.RIGHT,6,0));
-        storage.add(Theme.button("일정 공유",false,()->share(false)));
-        storage.add(Theme.button("일정 가져오기",false,()->share(true)));
+        storage.add(shareButton);
+        JButton friends = Theme.button("", false, this::showFriendsDialog);
+        friends.setIcon(FriendsDialog.icon());
+        friends.setToolTipText("친구");
+        friends.getAccessibleContext().setAccessibleName("친구");
+        storage.add(friends);
         storage.add(saveStatus);
         footer.add(storage, BorderLayout.EAST);
         page.add(footer, BorderLayout.SOUTH);
@@ -179,13 +218,21 @@ public final class MainFrame extends JFrame {
     private JPanel header() {
         JPanel header = Theme.transparent(new BorderLayout(20, 0));
         JPanel actions = Theme.transparent(new FlowLayout(FlowLayout.RIGHT, 9, 6));
-        for(String view:VIEW_ORDER) {
-            JButton button=Theme.button(view,false,()->showView(view));viewButtons.put(view,button);actions.add(button);
+        for (String view : VIEW_ORDER) {
+            JButton button = Theme.button(view, false, () -> showView(view));
+            viewButtons.put(view, button);
+            actions.add(button);
         }
         actions.add(workspaceButton);
         updateViewButtons();
         header.add(timeTools,BorderLayout.WEST);
         header.add(actions, BorderLayout.EAST);
+        friendStatus.putClientProperty("html.disable", true);
+        friendStatus.setForeground(Theme.BLUE);
+        friendBanner.add(friendStatus, BorderLayout.CENTER);
+        friendBanner.add(Theme.button("내 일정으로 돌아가기", false, () -> applyFriend(null)), BorderLayout.EAST);
+        friendBanner.setVisible(false);
+        header.add(friendBanner, BorderLayout.CENTER);
         return header;
     }
 
@@ -205,6 +252,7 @@ public final class MainFrame extends JFrame {
         if (weatherRequest != null) weatherRequest.cancel(true);
         if(reminderTimer!=null)reminderTimer.stop();
         if(timeTools!=null)timeTools.close();
+        if (friendsDialog != null) friendsDialog.dispose();
         if(notifications!=null)notifications.close();
         super.dispose();
     }
@@ -213,7 +261,7 @@ public final class MainFrame extends JFrame {
         if (weatherRequest != null) return;
         double latitude = (data.minLat() + data.maxLat()) / 2;
         double longitude = (data.minLon() + data.maxLon()) / 2;
-        calendar.showWeather(forecast, "광주 예보 · Open-Meteo 조회 중…");
+        showCalendarWeather("광주 예보 · Open-Meteo 조회 중…");
         weatherRequest = new SwingWorker<>() {
             @Override protected Map<LocalDate, WeatherForecast.Day> doInBackground() throws IOException {
                 return WeatherForecast.fetch(latitude, longitude);
@@ -232,7 +280,7 @@ public final class MainFrame extends JFrame {
                 } catch (ExecutionException ex) {
                     status = forecast.isEmpty() ? "광주 예보 · 조회 실패" : "광주 예보 · 이전 자료 표시 중";
                 }
-                calendar.showWeather(forecast, status);
+                showCalendarWeather(status);
                 week.showWeather(selectedDate, forecast);
                 dailyPlanner.showWeather(forecast.get(plannerDate));
             }
@@ -244,11 +292,16 @@ public final class MainFrame extends JFrame {
         if(folders.isBusy())return;
         folders.closePopup();
         workspaceExpanded=!workspaceExpanded;
-        places.panel.setVisible(!workspaceExpanded);
-        daily.panel.setVisible(!workspaceExpanded);
-        week.panel.setVisible(!workspaceExpanded);
+        updateWorkspaceVisibility();
         workspaceButton.setText(workspaceExpanded?"원래 크기":"중앙 확대");
         revalidate();repaint();
+    }
+
+    private void updateWorkspaceVisibility() {
+        boolean comparing = comparedFriend != null && ("주간시간표".equals(activeView) || "달력".equals(activeView));
+        places.panel.setVisible(!workspaceExpanded && !comparing);
+        daily.panel.setVisible(!workspaceExpanded && !comparing);
+        week.panel.setVisible(!workspaceExpanded || comparing);
     }
 
     private JPanel viewCard(JComponent content) {
@@ -324,8 +377,18 @@ public final class MainFrame extends JFrame {
         return arrow;
     }
 
+    private void showCalendarWeather(String status) {
+        calendar.showWeather(forecast, status);
+        ownCalendarComparison.showWeather(forecast, status);
+        friendCalendarComparison.showWeather(forecast, status);
+    }
+
     private String adjacentView(int direction) {
-        return VIEW_ORDER.get(Math.floorMod(VIEW_ORDER.indexOf(activeView) + direction, VIEW_ORDER.size()));
+        int next = Math.floorMod(VIEW_ORDER.indexOf(activeView) + direction, VIEW_ORDER.size());
+        if (activeFriend != null && MATERIALS_VIEW.equals(VIEW_ORDER.get(next))) {
+            next = Math.floorMod(next + direction, VIEW_ORDER.size());
+        }
+        return VIEW_ORDER.get(next);
     }
 
     private void showView(String name) {
@@ -334,19 +397,25 @@ public final class MainFrame extends JFrame {
 
     void openPlanner(LocalDate date) {
         showView(PLANNER_VIEW, date);
-        if (PLANNER_VIEW.equals(activeView) && plannerDate.equals(date)) {
+        if (activeFriend == null && PLANNER_VIEW.equals(activeView) && plannerDate.equals(date)) {
             SwingUtilities.invokeLater(dailyPlanner::focusAddTask);
         }
     }
 
     private void showView(String name, LocalDate targetPlannerDate) {
-        if(folders.isBusy())return;
+        if (folders.isBusy() || (activeFriend != null && MATERIALS_VIEW.equals(name))) return;
         noteTimer.stop(); if(unsaved&&!persist())return;
         if (PLANNER_VIEW.equals(name)) {
             plannerDate = targetPlannerDate == null ? PlannerTime.today() : targetPlannerDate;
             if (targetPlannerDate != null && !selectedDate.equals(targetPlannerDate)) selectDate(targetPlannerDate);
         }
-        folders.closePopup();activeView=name;viewLayout.show(views,name);updateViewButtons();refresh();
+        if (!MATERIALS_VIEW.equals(name)) lastScheduleView = name;
+        folders.closePopup();
+        activeView = name;
+        viewLayout.show(views, name);
+        updateViewButtons();
+        updateWorkspaceVisibility();
+        refresh();
     }
 
     void selectWeekDate(LocalDate date) {
@@ -359,6 +428,9 @@ public final class MainFrame extends JFrame {
         previousView.getAccessibleContext().setAccessibleName(previousView.getToolTipText());
         nextView.getAccessibleContext().setAccessibleName(nextView.getToolTipText());
         viewButtons.forEach((name,button)->{
+            boolean available = !MATERIALS_VIEW.equals(name) || activeFriend == null;
+            button.setEnabled(available);
+            button.setToolTipText(available ? null : "내 일정에서 과목자료를 볼 수 있습니다");
             boolean selected=name.equals(activeView);
             button.putClientProperty("calendar.fill",selected?Theme.PALE_BLUE:null);
             button.setForeground(selected?Theme.BLUE:Theme.INK);button.repaint();
@@ -368,29 +440,197 @@ public final class MainFrame extends JFrame {
         unsaved=true;boolean saved=persist();refresh();return saved;
     }
     void editDeadline(PlannerModel.Deadline item,LocalDate date,boolean linked) {
+        if (activeFriend != null) return;
         var result=DeadlineDialog.open(this,date,item,linked);if(result==null)return;
         if(result.deleted())model.removeDeadline(result.deadline().id());else model.putDeadline(result.deadline());
         saveChanged();
     }
     void toggleDailyTask(PlannerModel.Deadline task) {
+        if (activeFriend != null) return;
         model.toggleDeadline(task.id());
         saveChanged();
     }
     void deleteDailyTask(PlannerModel.Deadline task) {
+        if (activeFriend != null) return;
         if (JOptionPane.showConfirmDialog(this, "이 체크리스트 항목을 삭제할까요?", "항목 삭제",
                 JOptionPane.YES_NO_OPTION) != JOptionPane.YES_OPTION) return;
         model.removeDeadline(task.id());
         saveChanged();
     }
-    private void share(boolean importing) {
-        if(folders.isBusy())return;
-        noteTimer.stop();if(unsaved&&!persist())return;
+    private void showSharingDialog() {
+        if (folders.isBusy()) return;
+        JOptionPane options = new JOptionPane("일정 파일", JOptionPane.PLAIN_MESSAGE);
+        JButton export = Theme.button("내보내기", false, () -> options.setValue(Boolean.FALSE));
+        JButton importButton = Theme.button("가져오기", false, () -> options.setValue(Boolean.TRUE));
+        export.setEnabled(activeFriend == null);
+        if (!export.isEnabled()) export.setToolTipText("내 일정으로 돌아가면 내보낼 수 있습니다.");
+        options.setOptions(new Object[]{export, importButton});
+        JDialog dialog = options.createDialog(this, "일정 공유");
+        dialog.getRootPane().setDefaultButton(export.isEnabled() ? export : importButton);
         try {
-            if(importing) {
-                if(ScheduleSharing.importFile(this,model)) {unsaved=true;placeService.sync();saveChanged();}
-            } else ScheduleSharing.exportFile(this,model);
-        } catch(IOException ex) {JOptionPane.showMessageDialog(this,ex.getMessage(),"일정 공유",JOptionPane.ERROR_MESSAGE);}
+            dialog.setVisible(true);
+        } finally {
+            dialog.dispose();
+        }
+
+        if (options.getValue() instanceof Boolean importing) share(importing);
     }
+
+    private void share(boolean importing) {
+        if (folders.isBusy()) return;
+        noteTimer.stop();
+        if (unsaved && !persist()) return;
+        try {
+            if (importing) importSchedule(this);
+            else if (activeFriend == null) ScheduleSharing.exportFile(this, model);
+        } catch (IOException ex) {
+            JOptionPane.showMessageDialog(this, ex.getMessage(), importing ? "일정 가져오기" : "일정 내보내기",
+                    JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void importSchedule(Component owner) throws IOException {
+        PlannerModel incoming = ScheduleSharing.readFile(owner);
+        if (incoming == null) return;
+        String[] choices = {"내 일정에 합치기", "친구로 가져오기", "취소"};
+        int destination = JOptionPane.showOptionDialog(owner, "일정을 어디에 추가할까요?", "일정 가져오기",
+                JOptionPane.DEFAULT_OPTION, JOptionPane.QUESTION_MESSAGE, null, choices, choices[1]);
+        if (destination == 0) {
+            model.mergeFrom(incoming);
+            unsaved = true;
+            placeService.sync();
+            saveChanged();
+            return;
+        }
+        if (destination != 1) return;
+        String name = JOptionPane.showInputDialog(owner, "친구 이름 (같은 이름을 입력하면 기존 친구에 추가됩니다)");
+        if (name != null && friendSchedules.find(name) != null
+                && JOptionPane.showConfirmDialog(owner, "이 친구의 일정에 추가할까요?", "친구 일정 가져오기",
+                        JOptionPane.YES_NO_OPTION) != JOptionPane.YES_OPTION) return;
+        if (name == null) return;
+        try {
+            Friend saved = friendSchedules.importSchedule(name, incoming);
+            if (comparedFriend != null && comparedFriend.id().equals(saved.id())) setComparison(saved);
+            if (activeFriend != null && activeFriend.id().equals(saved.id()) && changeScheduleContext(saved)) refresh();
+            showFriendsDialog();
+        } catch (IllegalArgumentException ex) {
+            JOptionPane.showMessageDialog(owner, ex.getMessage(), "친구 이름", JOptionPane.WARNING_MESSAGE);
+        }
+    }
+
+    private void showFriendsDialog() {
+        if (friendsDialog == null) {
+            friendsDialog = new FriendsDialog(this, this::applyFriend);
+        }
+        friendsDialog.refresh(friendSchedules, activeFriend);
+        friendsDialog.setVisible(true);
+        friendsDialog.toFront();
+    }
+
+    private void applyFriend(Friend friend) {
+        if (changeScheduleContext(friend)) {
+            if (friendsDialog != null) friendsDialog.setVisible(false);
+            String next = MATERIALS_VIEW.equals(activeView) ? lastScheduleView : activeView;
+            showView(next, PLANNER_VIEW.equals(next) ? plannerDate : null);
+        }
+    }
+
+    private boolean changeScheduleContext(Friend friend) {
+        if (folders.isBusy()) return false;
+        noteTimer.stop();
+        if (unsaved && !persist()) return false;
+        if (activeFriend == friend) return true;
+        try {
+            CampusMap nextPlaces = friend == null ? null : placesFor(friend);
+            RouteService nextRoutes = friend == null ? null : new RouteService(nextPlaces);
+            MapPanel nextMap = friend == null ? null : new MapPanel(nextPlaces, friend.model(), this::selectBuilding);
+            if (nextMap != null) nextMap.setRouteMenu(this::routeMenu);
+            folders.closePopup();
+            activeFriend = friend;
+            friendPlaces = nextPlaces;
+            friendRoutes = nextRoutes;
+            friendPlans = friend == null ? null : new DayPlanService(nextPlaces, nextRoutes);
+            friendMap = nextMap;
+            searchedRoute = null;
+            routeFrom = routeTo = selectedBuilding = null;
+            map.clearSearchRoute();
+            map.select(null);
+            mapCanvas.removeAll();
+            mapCanvas.add(visibleMap(), BorderLayout.CENTER);
+
+            boolean readOnly = friend != null;
+            PlannerModel current = displayedModel();
+            CampusMap currentPlaces = displayedPlaces();
+            timetable.setScheduleContext(currentPlaces, current, readOnly);
+            calendar.setScheduleContext(current, readOnly);
+            week.setScheduleModel(current);
+            timeTools.setScheduleModel(current);
+            daily.setScheduleContext(currentPlaces, current, readOnly);
+            dailyPlanner.setScheduleContext(current, readOnly);
+            places.setScheduleContext(currentPlaces, current, readOnly);
+            fileSearch.setVisible(!readOnly);
+            friendStatus.setText(readOnly ? friend.name() + "의 일정을 적용중" : "");
+            friendStatus.setToolTipText(readOnly ? friendStatus.getText() + " · 보기 전용" : null);
+            friendBanner.setVisible(readOnly);
+            return true;
+        } catch (IOException ex) {
+            JOptionPane.showMessageDialog(this, ex.getMessage(), "친구 일정 열기", JOptionPane.ERROR_MESSAGE);
+            return false;
+        }
+    }
+
+    private CampusMap placesFor(Friend friend) {
+        CampusMap copy = data.copyBasePlaces();
+        PlaceService.applyPlaces(copy, friend.model());
+        return copy;
+    }
+
+    private PlannerModel displayedModel() { return activeFriend == null ? model : activeFriend.model(); }
+    private CampusMap displayedPlaces() { return activeFriend == null ? data : friendPlaces; }
+    private MapPanel visibleMap() { return activeFriend == null ? map : friendMap; }
+    private RouteService displayedRoutes() { return activeFriend == null ? routes : friendRoutes; }
+
+    private void chooseComparison() {
+        Friend selected = comparedFriend == null ? activeFriend : comparedFriend;
+        FriendsDialog.chooseForComparison(this, friendSchedules, selected, this::setComparison);
+    }
+
+    private void setComparison(Friend friend) {
+        comparedFriend = friend;
+        if (friend != null) {
+            friendTimetableComparison.setScheduleContext(placesFor(friend), friend.model(), true);
+            friendCalendarComparison.setScheduleContext(friend.model(), true);
+            refreshComparison();
+        }
+        String name = friend == null ? null : friend.name();
+        timetableView.showComparison(name);
+        calendarView.showComparison(name);
+        updateWorkspaceVisibility();
+        revalidate();
+    }
+
+    private void refreshComparison() {
+        if (comparedFriend == null) return;
+        LocalDate start = TimetableService.sunday(selectedDate);
+        int first = 8;
+        for (int day = 0; day < 7; day++) {
+            LocalDate date = start.plusDays(day);
+            for (PlannerModel schedule : List.of(model, comparedFriend.model())) {
+                for (Occurrence occurrence : schedule.occurrences(date)) {
+                    first = Math.min(first, occurrence.event().start().getHour());
+                }
+            }
+        }
+        ownTimetableComparison.refresh(selectedDate, first);
+        friendTimetableComparison.refresh(selectedDate, first);
+        ownCalendarComparison.refresh(selectedDate);
+        friendCalendarComparison.refresh(selectedDate);
+    }
+
+    private void openComparedPlanner(Friend friend, LocalDate date) {
+        if (changeScheduleContext(friend)) openPlanner(date);
+    }
+
     private void addPin(CampusMap.GeoPoint point) {
         if(folders.isBusy())return;
         String name=JOptionPane.showInputDialog(this,"핀 이름");if(name==null||name.isBlank())return;
@@ -406,7 +646,7 @@ public final class MainFrame extends JFrame {
     }
 
     JMenuItem buildingNoteItem(Building building) {
-        if (building.outline().size() < 3) return null;
+        if (activeFriend != null || building.outline().size() < 3) return null;
         String title = model.buildingNote(building.id()).isBlank() ? "메모 추가" : "메모 보기·수정";
         JMenuItem item = new JMenuItem(title);
         item.setEnabled(!folders.isBusy());
@@ -451,18 +691,19 @@ public final class MainFrame extends JFrame {
         top.add(titles,BorderLayout.WEST);
         JPanel controls = Theme.transparent(new FlowLayout(FlowLayout.RIGHT,5,0));
         JButton routeSearch=Theme.button("최단거리 찾기",false,this::findRoute);
-        JButton fileSearch=folders.searchButton();
+        fileSearch=folders.searchButton();
         Dimension searchSize=new Dimension(Math.max(routeSearch.getPreferredSize().width,fileSearch.getPreferredSize().width),
                 Math.max(routeSearch.getPreferredSize().height,fileSearch.getPreferredSize().height));
         routeSearch.setPreferredSize(searchSize);fileSearch.setPreferredSize(searchSize);
         controls.add(routeSearch);controls.add(fileSearch);
-        controls.add(Theme.button("-",false,() -> map.zoom(1/1.3)));
-        controls.add(Theme.button("+",false,() -> map.zoom(1.3)));
+        controls.add(Theme.button("-",false,() -> visibleMap().zoom(1/1.3)));
+        controls.add(Theme.button("+",false,() -> visibleMap().zoom(1.3)));
         top.add(controls,BorderLayout.EAST);
         JPanel mapHeader = Theme.transparent(new BorderLayout(0, 11));
         mapHeader.add(top, BorderLayout.NORTH);
         panel.add(mapHeader,BorderLayout.NORTH);
-        panel.add(map,BorderLayout.CENTER);
+        mapCanvas.add(map, BorderLayout.CENTER);
+        panel.add(mapCanvas, BorderLayout.CENTER);
         JPanel legend = Theme.transparent(new BorderLayout());
         legend.add(mapLegend,BorderLayout.WEST);
         legend.add(Theme.button("일정 경로",false,this::showScheduleMap),BorderLayout.EAST);
@@ -480,17 +721,20 @@ public final class MainFrame extends JFrame {
     private void selectDate(LocalDate date) {
         selectedDate = date;
         searchedRoute = null;
-        map.clearSearchRoute();
+        visibleMap().clearSearchRoute();
     }
 
     private void refresh() {
         timeTools.refreshSchedule(selectedDate);
         week.refresh(selectedDate);
         Semester semester=Semester.forDate(selectedDate);
-        timetable.refresh(selectedDate);calendar.refresh(selectedDate,semester);materials.refresh(semester);
-        List<Occurrence> occurrences = model.occurrences(selectedDate);
-        List<Leg> legs = plans.legs(occurrences);
-        map.setOccurrences(occurrences, legs);
+        timetable.refresh(selectedDate);
+        calendar.refresh(selectedDate, semester);
+        if (activeFriend == null) materials.refresh(semester);
+        refreshComparison();
+        List<Occurrence> occurrences = displayedModel().occurrences(selectedDate);
+        List<Leg> legs = (activeFriend == null ? plans : friendPlans).legs(occurrences);
+        visibleMap().setOccurrences(occurrences, legs);
         daily.refresh(selectedDate, occurrences, legs);
         dailyPlanner.refresh(plannerDate, forecast.get(plannerDate));
         updateMapSummary();
@@ -518,11 +762,11 @@ public final class MainFrame extends JFrame {
             }
             return;
         }
-        long count = model.occurrences(selectedDate).stream().filter(o -> !o.canceled()).count();
-        double meters = map.legs().stream().filter(l -> l.route().reachable()).mapToDouble(l -> l.route().meters()).sum();
-        long unavailable = map.legs().stream().filter(SchedulePanel::showsWalkingLeg).filter(l -> !l.route().reachable()).count();
-        int minutes = map.legs().stream().filter(l -> l.route().reachable()).mapToInt(Leg::minutes).sum();
-        mapSubtitle.setText(count == 0 ? "날짜를 고르고 일정을 추가해 보세요" :
+        long count = displayedModel().occurrences(selectedDate).stream().filter(o -> !o.canceled()).count();
+        double meters = visibleMap().legs().stream().filter(l -> l.route().reachable()).mapToDouble(l -> l.route().meters()).sum();
+        long unavailable = visibleMap().legs().stream().filter(SchedulePanel::showsWalkingLeg).filter(l -> !l.route().reachable()).count();
+        int minutes = visibleMap().legs().stream().filter(l -> l.route().reachable()).mapToInt(Leg::minutes).sum();
+        mapSubtitle.setText(count == 0 ? (activeFriend == null ? "날짜를 고르고 일정을 추가해 보세요" : "등록된 일정 없음") :
                 count + "개 일정 · " + String.format(Locale.ROOT, "%,.0f m", meters) + " · 약 " + minutes + "분"
                         + (unavailable > 0 ? " · 일부 경로 없음" : ""));
     }
@@ -534,11 +778,12 @@ public final class MainFrame extends JFrame {
         menu.add(from);
         if(routeFrom!=null&&!routeFrom.id().equals(building.id())) {
             JMenuItem to=new JMenuItem("도착지로 설정");
-            to.addActionListener(e->{routeTo=building;folders.closePopup();showRoute(new RouteDialog.Result(routeFrom,routeTo,routes.route(routeFrom,routeTo)));});menu.add(to);
+            to.addActionListener(e->{routeTo=building;folders.closePopup();showRoute(new RouteDialog.Result(routeFrom,routeTo,displayedRoutes().route(routeFrom,routeTo)));});menu.add(to);
         }
         if(routeFrom!=null) {
             JMenuItem reset=new JMenuItem("출발·도착 선택 해제");reset.addActionListener(e->{routeFrom=null;routeTo=null;showScheduleMap();});menu.add(reset);
         }
+        if (activeFriend != null) return menu;
         menu.addSeparator();
         JMenuItem create=new JMenuItem("폴더 생성");
         create.setEnabled(!folders.hasFolder(building)&&!folders.isBusy());
@@ -553,7 +798,7 @@ public final class MainFrame extends JFrame {
     }
 
     private void findRoute() {
-        RouteDialog.Result result = RouteDialog.open(this, data, routes, model, routeFrom==null?selectedBuilding:routeFrom, routeTo);
+        RouteDialog.Result result = RouteDialog.open(this, displayedPlaces(), displayedRoutes(), displayedModel(), routeFrom==null?selectedBuilding:routeFrom, routeTo);
         if (result == null) return;
         showRoute(result);
     }
@@ -561,7 +806,7 @@ public final class MainFrame extends JFrame {
     private void showRoute(RouteDialog.Result result) {
         routeFrom=result.from();routeTo=result.to();
         searchedRoute = result;
-        map.setSearchRoute(result.from(), result.to(), result.route());
+        visibleMap().setSearchRoute(result.from(), result.to(), result.route());
         updateMapSummary();
         revalidate();
         repaint();
@@ -569,7 +814,7 @@ public final class MainFrame extends JFrame {
 
     private void showScheduleMap() {
         searchedRoute = null;
-        map.clearSearchRoute();
+        visibleMap().clearSearchRoute();
         updateMapSummary();
         revalidate();
         repaint();
@@ -580,6 +825,7 @@ public final class MainFrame extends JFrame {
     }
 
     void edit(Event event, boolean repeat, ScheduleSlot slot) {
+        if (activeFriend != null) return;
         noteTimer.stop();
         if(unsaved && !persist())return;
         if(folders.isBusy())return;
@@ -605,6 +851,7 @@ public final class MainFrame extends JFrame {
     }
 
     void toggleCancellation(Event event) {
+        if (activeFriend != null) return;
         model.toggleCancellation(event.id(),selectedDate);
         unsaved=true;
         persist();
@@ -613,11 +860,12 @@ public final class MainFrame extends JFrame {
 
     void selectBuilding(Building building) {
         selectedBuilding=building;
-        map.select(building.id());
+        visibleMap().select(building.id());
         places.showSelected(building);
     }
 
     void toggleFavorite() {
+        if (activeFriend != null) return;
         if(selectedBuilding==null)return;
         model.toggleFavorite(selectedBuilding.id());
         unsaved=true;
@@ -627,6 +875,7 @@ public final class MainFrame extends JFrame {
     }
 
     void noteChanged() {
+        if (activeFriend != null) return;
         unsaved = true;
         saveStatus.setText("메모 저장 중…");
         noteTimer.restart();
