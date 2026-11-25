@@ -50,6 +50,8 @@ public final class CampusMap {
     final Map<Long, Way> osmWays;
     private final List<MapWay> ways = new ArrayList<>();
     private final Map<String, String> originalNames = new HashMap<>();
+    /** 사용자 이름 변경 전 지도 기본 이름(공식 명칭 반영). 친구 지도 사본이 이 이름으로 시작한다. */
+    private final Map<String, String> baseNames = new HashMap<>();
     private final Map<String, Building> byId = new LinkedHashMap<>();
     private List<GeoPoint> boundary = List.of();
     private double minLat, maxLat, minLon, maxLon;
@@ -67,6 +69,7 @@ public final class CampusMap {
         buildingRefs.putAll(source.buildingRefs);
         obstacles.addAll(source.obstacles);
         originalNames.putAll(source.originalNames);
+        baseNames.putAll(source.baseNames);
         boundary = source.boundary;
         minLat = source.minLat;
         maxLat = source.maxLat;
@@ -75,7 +78,8 @@ public final class CampusMap {
         extractBounds = source.extractBounds;
         for (Building place : source.buildings) {
             if (!place.id().startsWith("pin:")) {
-                putPlace(new Building(place.id(), source.originalName(place.id()), place.outline(), place.center()));
+                String name = baseNames.getOrDefault(place.id(), source.originalName(place.id()));
+                putPlace(new Building(place.id(), name, place.outline(), place.center()));
             }
         }
     }
@@ -218,6 +222,7 @@ public final class CampusMap {
             originalNames.put(id, title);
             title = display;
         }
+        baseNames.put(id, title);
         Building building = new Building(id, title, outline, center);
         buildings.add(building);
         byId.put(id, building);
@@ -238,6 +243,7 @@ public final class CampusMap {
         if(title.isBlank()||!inExtractBounds(point))return;
         putPlace(new Building(id,title,List.of(point),point));
         originalNames.put(id,title);
+        baseNames.put(id,title);
     }
     private boolean inExtractBounds(GeoPoint p) {
         return extractBounds==null?inDisplayBounds(p):p.lat>=extractBounds[0]&&p.lon>=extractBounds[1]
