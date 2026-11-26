@@ -14,7 +14,7 @@ import javax.swing.JToggleButton;
 
 /** 켜짐·꺼짐 스위치. JToggleButton을 그대로 써서 클릭·스페이스 키·접근성 동작은 Swing 기본을 따른다. */
 final class ToggleSwitch extends JToggleButton {
-    private static final int TRACK_WIDTH = 34, TRACK_HEIGHT = 18, GAP = 7;
+    private static final int TRACK_WIDTH = 34, TRACK_HEIGHT = 18, GAP = 8;
     private static final Color OFF_TRACK = new Color(196, 204, 215);
 
     ToggleSwitch(String text, boolean selected) {
@@ -25,7 +25,7 @@ final class ToggleSwitch extends JToggleButton {
         setContentAreaFilled(false);
         setBorderPainted(false);
         setFocusPainted(false);
-        setBorder(BorderFactory.createEmptyBorder(3, 3, 3, 3));
+        setBorder(BorderFactory.createEmptyBorder(4, 4, 4, 4));
         setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         putClientProperty("html.disable", true);
     }

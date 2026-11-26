@@ -17,7 +17,7 @@ public final class TimeToolsPanel extends JPanel implements AutoCloseable {
     private final CountdownTimer countdown;
     private PlannerModel model;
     private final Consumer<String> notify;
-    private final JLabel clock = Theme.label(" ", 15, Theme.INK);
+    private final JLabel clock = Theme.label(" ", 13, Theme.MUTED);
     private final JLabel remaining = Theme.heading("25:00", 26);
     private final JSpinner minutes = new JSpinner(new SpinnerNumberModel(25, 1, 1440, 1));
     private final JPanel timerPanel = Theme.card(new GridBagLayout());
@@ -39,16 +39,14 @@ public final class TimeToolsPanel extends JPanel implements AutoCloseable {
     }
 
     private TimeToolsPanel(CountdownTimer countdown, PlannerModel model, Consumer<String> notify) {
-        super(new FlowLayout(FlowLayout.LEFT, 5, 4));
+        super(new FlowLayout(FlowLayout.LEFT, 4, 0));
         setOpaque(false);
         this.countdown = countdown;
         this.model = model;
         this.notify = notify;
         clock.setToolTipText("현재 한국 시각");
         clock.setHorizontalAlignment(SwingConstants.CENTER);
-        clock.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(Theme.LINE, 1, true),
-                BorderFactory.createEmptyBorder(4, 8, 4, 8)));
+        clock.setBorder(BorderFactory.createEmptyBorder(4, 4, 4, 0));
         Insets padding = clock.getInsets();
         FontMetrics clockMetrics = clock.getFontMetrics(clock.getFont());
         int digitWidth = 0;
@@ -56,9 +54,8 @@ public final class TimeToolsPanel extends JPanel implements AutoCloseable {
             digitWidth = Math.max(digitWidth, clockMetrics.charWidth(digit));
         clock.setPreferredSize(new Dimension(digitWidth * 6 + clockMetrics.charWidth(':') * 2
                 + padding.left + padding.right, clockMetrics.getHeight() + padding.top + padding.bottom));
-        JButton tools = Theme.button("", false, this::openTools);
-        tools.setIcon(clockIcon());
-        tools.setBorder(BorderFactory.createEmptyBorder(5, 6, 5, 6));
+        JButton tools = Theme.quietButton("", "clock", this::openTools);
+        tools.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
         tools.setToolTipText("시계 · 타이머 · 스톱워치");
         tools.getAccessibleContext().setAccessibleName(tools.getToolTipText());
         add(tools);
@@ -84,7 +81,7 @@ public final class TimeToolsPanel extends JPanel implements AutoCloseable {
         layout.gridx = 0;
         layout.insets = new Insets(4, 0, 4, 0);
         timerPanel.add(remaining, layout);
-        JPanel input = Theme.transparent(new FlowLayout(FlowLayout.CENTER, 6, 0));
+        JPanel input = Theme.transparent(new FlowLayout(FlowLayout.CENTER, 8, 0));
         JLabel unit = Theme.label("분", 12, Theme.MUTED);
         unit.setLabelFor(minutes);
         minutes.getAccessibleContext().setAccessibleName("타이머 시간(분)");
@@ -92,7 +89,7 @@ public final class TimeToolsPanel extends JPanel implements AutoCloseable {
         input.add(unit);
         layout.gridy = 1;
         timerPanel.add(input, layout);
-        JPanel actions = Theme.transparent(new FlowLayout(FlowLayout.CENTER, 6, 0));
+        JPanel actions = Theme.transparent(new FlowLayout(FlowLayout.CENTER, 8, 0));
         for (JButton button : List.of(start, pause, reset)) actions.add(button);
         layout.gridy = 2;
         timerPanel.add(actions, layout);
@@ -137,6 +134,11 @@ public final class TimeToolsPanel extends JPanel implements AutoCloseable {
         }
     }
 
+    void showNotice(String text) {
+        clock.setToolTipText(text);
+        clock.getAccessibleContext().setAccessibleDescription(text);
+    }
+
     void tick() {
         if (closed) return;
         clock.setText(PlannerTime.now().format(CLOCK));
@@ -153,28 +155,6 @@ public final class TimeToolsPanel extends JPanel implements AutoCloseable {
             notify.accept("설정한 타이머가 끝났습니다.");
         }
         if (window != null && window.isShowing()) window.tick();
-    }
-
-    private static Icon clockIcon() {
-        return new Icon() {
-            @Override public int getIconWidth() { return 16; }
-            @Override public int getIconHeight() { return 16; }
-
-            @Override public void paintIcon(Component c, Graphics graphics, int x, int y) {
-                Graphics2D g = (Graphics2D) graphics.create();
-                try {
-                    g.translate(x, y);
-                    g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-                    g.setColor(Theme.BLUE);
-                    g.setStroke(new BasicStroke(1.5f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-                    g.drawOval(1, 1, 13, 13);
-                    g.drawLine(8, 4, 8, 8);
-                    g.drawLine(8, 8, 11, 9);
-                } finally {
-                    g.dispose();
-                }
-            }
-        };
     }
 
     @Override public void close() {

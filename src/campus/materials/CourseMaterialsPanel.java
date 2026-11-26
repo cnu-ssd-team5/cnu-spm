@@ -43,7 +43,7 @@ public final class CourseMaterialsPanel extends JPanel {
             }});
             card.getInputMap().put(KeyStroke.getKeyStroke("ENTER"),"openCourse");
             card.getActionMap().put("openCourse",new AbstractAction(){public void actionPerformed(ActionEvent e){folders.openCourse(card,event);}});
-            JPanel tile=Theme.transparent(new BorderLayout(0,5));
+            JPanel tile=Theme.transparent(new BorderLayout(0,4));
             tile.add(card,BorderLayout.CENTER);
             JButton openDirectory=Theme.button("원본 디렉터리 열기",false,()->folders.openCourseDirectory(card,event));
             openDirectory.setEnabled(building!=null);

@@ -26,7 +26,7 @@ final class DailyPlannerPanel extends JPanel {
     private final JLabel weatherLabel = Theme.label("", 11, Theme.MUTED);
     private final JLabel taskCount = Theme.label(" ", 12, Theme.MUTED);
     private final JLabel deadlineCount = Theme.label(" ", 11, Theme.MUTED);
-    private final JPanel deadlineRows = Theme.transparent(new GridLayout(0, 1, 0, 6));
+    private final JPanel deadlineRows = Theme.transparent(new GridLayout(0, 1, 0, 8));
     private final JButton addTask;
     private final JButton addDeadline = Theme.button("+ 추가", false, this::addDeadline);
     private boolean readOnly;
@@ -40,7 +40,7 @@ final class DailyPlannerPanel extends JPanel {
     private boolean refreshing;
 
     DailyPlannerPanel(MainFrame frame, PlannerModel model) {
-        super(new BorderLayout(0, 14));
+        super(new BorderLayout(0, 16));
         this.frame = frame;
         this.model = model;
         setOpaque(false);
@@ -52,7 +52,7 @@ final class DailyPlannerPanel extends JPanel {
         add(header, BorderLayout.NORTH);
 
         JPanel columns = Theme.transparent(new GridLayout(1, 2, 12, 0));
-        JPanel checklist = Theme.card(new BorderLayout(0, 10));
+        JPanel checklist = Theme.card(new BorderLayout(0, 12));
         checklist.setBackground(Theme.BACKGROUND);
         JPanel taskHeader = Theme.transparent(new BorderLayout(4, 0));
         JPanel taskHeading = Theme.transparent(new GridLayout(0, 1, 0, 4));
@@ -67,7 +67,7 @@ final class DailyPlannerPanel extends JPanel {
         checklist.add(Theme.scroll(tasks), BorderLayout.CENTER);
         columns.add(checklist);
 
-        JPanel notebook = Theme.card(new BorderLayout(0, 10));
+        JPanel notebook = Theme.card(new BorderLayout(0, 12));
         notebook.setBackground(Theme.BACKGROUND);
         notebook.add(Theme.heading("메모", 15), BorderLayout.NORTH);
         Theme.field(memo);
@@ -121,7 +121,7 @@ final class DailyPlannerPanel extends JPanel {
         row.gridy = 0;
         row.weightx = 1;
         row.fill = GridBagConstraints.HORIZONTAL;
-        row.insets = new Insets(0, 0, 6, 0);
+        row.insets = new Insets(0, 0, 8, 0);
         if (checklist.isEmpty()) {
             tasks.add(Theme.label("등록된 항목이 없습니다.", 12, Theme.MUTED), row);
             row.gridy++;
@@ -192,7 +192,7 @@ final class DailyPlannerPanel extends JPanel {
         item.setHorizontalAlignment(SwingConstants.LEFT);
         item.setToolTipText("<html>" + title + " · " + due + " · " + status + "</html>");
         item.setForeground(deadline.completed() ? Theme.MUTED : days == 0 ? Theme.TODAY_TEXT : Theme.INK);
-        JCheckBox complete = new JCheckBox();
+        JCheckBox complete = Theme.checkBox("",deadline.completed());
         complete.setSelected(deadline.completed());
         complete.setEnabled(!readOnly);
         item.setEnabled(!readOnly);
@@ -219,7 +219,7 @@ final class DailyPlannerPanel extends JPanel {
     }
 
     private JPanel taskRow(Deadline task) {
-        JPanel row = new JPanel(new BorderLayout(4, 6)) {
+        JPanel row = new JPanel(new BorderLayout(4, 8)) {
             @Override protected void paintComponent(Graphics graphics) {
                 Graphics2D g = (Graphics2D) graphics.create();
                 g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
@@ -235,8 +235,8 @@ final class DailyPlannerPanel extends JPanel {
             }
         };
         row.setOpaque(false);
-        row.setBorder(BorderFactory.createEmptyBorder(8, 9, 10, 9));
-        JCheckBox checkbox = new JCheckBox();
+        row.setBorder(BorderFactory.createEmptyBorder(8, 8, 12, 8));
+        JCheckBox checkbox = Theme.checkBox("",task.completed());
         checkbox.putClientProperty("html.disable", true);
         checkbox.setText(task.title());
         checkbox.setSelected(task.completed());
@@ -250,14 +250,14 @@ final class DailyPlannerPanel extends JPanel {
         row.add(checkbox, BorderLayout.NORTH);
         JPanel actions = Theme.transparent(new FlowLayout(FlowLayout.RIGHT, 4, 0));
         JButton edit = Theme.button("편집", false, () -> frame.editDeadline(task, task.plannerDate(), false));
-        edit.setBorder(BorderFactory.createEmptyBorder(4, 7, 4, 7));
+        edit.setBorder(BorderFactory.createEmptyBorder(4, 8, 4, 8));
         edit.getAccessibleContext().setAccessibleName(task.title() + " 편집");
         JButton delete = Theme.deleteButton("삭제", () -> frame.deleteDailyTask(task));
-        delete.setBorder(BorderFactory.createEmptyBorder(4, 7, 4, 7));
+        delete.setBorder(BorderFactory.createEmptyBorder(4, 8, 4, 8));
         delete.getAccessibleContext().setAccessibleName(task.title() + " 삭제");
         actions.add(edit);
         actions.add(delete);
-        JPanel details = Theme.transparent(new BorderLayout(0, 5));
+        JPanel details = Theme.transparent(new BorderLayout(0, 4));
         JPanel meta = Theme.transparent(new BorderLayout(4, 0));
         meta.add(priorityBadge(task.priority(), task.completed()), BorderLayout.WEST);
         if (!readOnly) meta.add(actions, BorderLayout.EAST);
@@ -291,7 +291,7 @@ final class DailyPlannerPanel extends JPanel {
         };
         badge.setFont(Theme.font(11, Font.BOLD));
         badge.setForeground(completed ? COMPLETE_TEXT : ACTIVE_TEXT);
-        badge.setBorder(BorderFactory.createEmptyBorder(3, 7, 3, 7));
+        badge.setBorder(BorderFactory.createEmptyBorder(4, 8, 4, 8));
         return badge;
     }
 

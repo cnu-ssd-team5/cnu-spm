@@ -20,7 +20,7 @@ import campus.model.PlannerModel.Deadline;
 
 public final class CalendarPanel extends JPanel {
     private static final Color DUE_COLOR = new Color(196, 54, 54);
-    private static final Color CELL_LINE = new Color(145, 161, 183);
+    private static final Color CELL_LINE = Theme.LINE;
     private PlannerModel model;
     private boolean showEventTitles;
     private final Consumer<LocalDate> onDateSelect;
@@ -32,9 +32,7 @@ public final class CalendarPanel extends JPanel {
     private final JButton[] monthButtons = new JButton[12];
     private final JLabel yearError = Theme.label(" ", 11, DUE_COLOR);
     private final JComboBox<Semester.Season> season = new JComboBox<>(Semester.Season.values());
-    private final JPanel days = new JPanel(new GridLayout(0, 7, 3, 3));
-    private final JLabel holidayRange = Theme.label(" ", 11, Theme.MUTED);
-    private final JLabel weatherStatus = Theme.label(" ", 11, Theme.MUTED);
+    private final JPanel days = new JPanel(new GridLayout(0, 7, 0, 0));
     private Map<LocalDate, Day> weather = Map.of();
     private LocalDate selectedDate = PlannerTime.today();
     private Semester selectedSemester = Semester.forDate(selectedDate);
@@ -51,14 +49,14 @@ public final class CalendarPanel extends JPanel {
     public CalendarPanel(PlannerModel model, Consumer<LocalDate> onDateSelect,
                   Consumer<LocalDate> onOpenPlanner,
                   Consumer<Semester> onSemesterSelect) {
-        super(new BorderLayout(0, 10));
+        super(new BorderLayout(0, 12));
         this.model = model;
         this.onDateSelect = onDateSelect;
         this.onOpenPlanner = onOpenPlanner;
         this.onSemesterSelect = onSemesterSelect;
         setOpaque(false);
 
-        JPanel top = Theme.transparent(new BorderLayout(0, 9));
+        JPanel top = Theme.transparent(new BorderLayout(0, 8));
         JPanel heading = Theme.transparent(new BorderLayout(8, 0));
         heading.add(Theme.heading("달력", 18), BorderLayout.WEST);
         season.setName("calendarSemester");
@@ -81,7 +79,7 @@ public final class CalendarPanel extends JPanel {
         top.add(heading, BorderLayout.NORTH);
 
         JPanel navigation = Theme.transparent(new BorderLayout(8, 0));
-        JPanel monthControls = Theme.transparent(new FlowLayout(FlowLayout.LEFT, 6, 0));
+        JPanel monthControls = Theme.transparent(new FlowLayout(FlowLayout.LEFT, 8, 0));
         monthControls.add(monthArrow("‹", "이전 달", -1));
         monthSelector = Theme.button(monthCaption(selectedDate), false, this::openMonthPicker);
         monthSelector.setName("calendarMonth");
@@ -94,8 +92,8 @@ public final class CalendarPanel extends JPanel {
         top.add(navigation, BorderLayout.SOUTH);
         add(top, BorderLayout.NORTH);
 
-        JPanel calendar = Theme.transparent(new BorderLayout(0, 5));
-        JPanel weekdays = Theme.transparent(new GridLayout(1, 7, 3, 0));
+        JPanel calendar = Theme.transparent(new BorderLayout(0, 4));
+        JPanel weekdays = Theme.transparent(new GridLayout(1, 7, 4, 0));
         for (String day : List.of("일", "월", "화", "수", "목", "금", "토")) {
             JLabel label = Theme.label(day, 12, day.equals("일") ? DUE_COLOR : day.equals("토") ? Theme.BLUE : Theme.MUTED);
             label.setHorizontalAlignment(SwingConstants.CENTER);
@@ -126,20 +124,10 @@ public final class CalendarPanel extends JPanel {
         calendar.add(days, BorderLayout.CENTER);
         add(calendar, BorderLayout.CENTER);
 
-        JPanel bottom = Theme.transparent(new BorderLayout());
-        holidayRange.setToolTipText("확인된 공휴일만 표시하며, 공휴일이라고 일정을 자동으로 휴강 처리하지 않습니다.");
-        bottom.add(holidayRange, BorderLayout.WEST);
-        bottom.add(Theme.label("날짜 더블클릭 또는 Enter로 플래너 열기", 11, Theme.MUTED), BorderLayout.EAST);
-        JPanel footer = Theme.transparent(new BorderLayout(0, 3));
-        footer.add(bottom, BorderLayout.NORTH);
-        footer.add(weatherStatus, BorderLayout.SOUTH);
-        weatherStatus.setVisible(false);
-        add(footer, BorderLayout.SOUTH);
     }
 
     public void showWeather(Map<LocalDate, Day> forecast, String status) {
-        weatherStatus.setText(status);
-        weatherStatus.setVisible(true);
+        setToolTipText(status);
         if (!weather.equals(forecast)) {
             weather = forecast;
             refresh(selectedDate, selectedSemester);
@@ -167,8 +155,6 @@ public final class CalendarPanel extends JPanel {
             refreshing = false;
         }
         YearMonth displayMonth = YearMonth.from(date);
-        holidayRange.setText(KoreaHolidays.supports(date.getYear()) ? "공휴일: 기본 목록 (2025~2027)"
-                : date.getYear() + "년 공휴일 자료 없음");
         LocalDate first = displayMonth.atDay(1).with(TemporalAdjusters.previousOrSame(DayOfWeek.SUNDAY));
         days.removeAll();
         for (int index = 0; index < rows(displayMonth) * 7; index++) days.add(dayCell(first.plusDays(index), displayMonth));
@@ -215,8 +201,8 @@ public final class CalendarPanel extends JPanel {
     }
 
     private void buildMonthPicker() {
-        JPanel picker = Theme.card(new BorderLayout(0, 10));
-        picker.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
+        JPanel picker = Theme.card(new BorderLayout(0, 12));
+        picker.setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 12));
         JPanel yearRow = Theme.transparent(new BorderLayout(8, 0));
         JLabel yearLabel = Theme.heading("연도", 12);
         yearLabel.setLabelFor(year);
@@ -232,7 +218,7 @@ public final class CalendarPanel extends JPanel {
         for (int index = 0; index < monthButtons.length; index++) {
             int month = index + 1;
             JButton button = Theme.button(month + "월", false, () -> selectMonth(month));
-            button.setBorder(BorderFactory.createEmptyBorder(6, 9, 6, 9));
+            button.setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
             monthButtons[index] = button;
             months.add(button);
         }
@@ -284,7 +270,7 @@ public final class CalendarPanel extends JPanel {
     private JPanel dayCell(LocalDate date, YearMonth month) {
         String holiday = KoreaHolidays.name(date);
         Day forecast = weather.get(date);
-        JPanel cell = new JPanel(new BorderLayout(0, 2));
+        JPanel cell = new JPanel(new BorderLayout(0, 4));
         cell.setBackground(date.equals(selectedDate) ? new Color(216, 231, 255)
                 : !YearMonth.from(date).equals(month) ? new Color(237, 241, 246)
                 : date.getDayOfWeek() == DayOfWeek.SATURDAY ? new Color(234, 246, 255)
@@ -292,7 +278,7 @@ public final class CalendarPanel extends JPanel {
         cell.setBorder(BorderFactory.createCompoundBorder(
                 BorderFactory.createLineBorder(date.equals(selectedDate) ? Theme.BLUE : CELL_LINE,
                         date.equals(selectedDate) ? 2 : 1),
-                BorderFactory.createEmptyBorder(2, 4, 2, 4)));
+                BorderFactory.createEmptyBorder(4, 4, 4, 4)));
         cell.setPreferredSize(new Dimension(80, 76));
         cell.setFocusable(true);
         JPanel dateRow = Theme.transparent(new BorderLayout());
@@ -302,7 +288,7 @@ public final class CalendarPanel extends JPanel {
                 : date.getDayOfWeek() == DayOfWeek.SATURDAY ? Theme.BLUE
                 : YearMonth.from(date).equals(month) ? Theme.INK : Theme.MUTED);
         day.setContentAreaFilled(false);
-        day.setBorder(BorderFactory.createEmptyBorder(1, 2, 1, 2));
+        day.setBorder(BorderFactory.createEmptyBorder(4, 4, 4, 4));
         day.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
         day.setName(date.toString());
         day.getAccessibleContext().setAccessibleName(date.toString());
@@ -333,7 +319,7 @@ public final class CalendarPanel extends JPanel {
         if (scheduled > 0) dateRow.add(Theme.label(scheduled + "개", 10, Theme.MUTED), BorderLayout.EAST);
         cell.add(dateRow, BorderLayout.NORTH);
 
-        JPanel assignments = Theme.transparent(new GridLayout(0, 1, 0, 2));
+        JPanel assignments = Theme.transparent(new GridLayout(0, 1, 0, 4));
         if (!holiday.isBlank()) {
             JLabel holidayLabel = Theme.label(holiday, 10, DUE_COLOR);
             holidayLabel.setToolTipText(holiday);

@@ -40,6 +40,9 @@ public final class ScheduleEntryWhiteBoxTest {
     static JButton button(Container root,String text) {
         return components(root,JButton.class).stream().filter(b->text.equals(b.getText())).findFirst().orElseThrow();
     }
+    static JButton scheduleAdd(SchedulePanel daily) {
+        return components(daily.panel,JButton.class).stream().filter(b->"schedule-add".equals(b.getName())).findFirst().orElseThrow();
+    }
     static JRadioButton radio(JDialog dialog,String text) {
         return components(dialog,JRadioButton.class).stream().filter(b->text.equals(b.getText())).findFirst().orElseThrow();
     }
@@ -87,24 +90,24 @@ public final class ScheduleEntryWhiteBoxTest {
                     test("removed-branding-not-in-main-ui",()->ok(components(host,JLabel.class).stream().noneMatch(l->l.getText()!=null&&(l.getText().equals("CNU")||l.getText().contains("나의 캠퍼스")||l.getText().contains("수업부터 약속까지"))),"branding remains"));
                     test("removed-footer-text-not-in-main-ui",()->ok(components(host,JLabel.class).stream().noneMatch(l->l.getText()!=null&&l.getText().contains("보행 속도 1.3")),"old footer remains"));
                     test("one-add-button-next-to-date-even-when-empty",()->{
-                        List<JButton> adds=components(daily.panel,JButton.class).stream().filter(b->b.getText()!=null&&b.getText().contains("일정 추가")).toList();
+                        List<JButton> adds=components(daily.panel,JButton.class).stream().filter(b->"schedule-add".equals(b.getName())).toList();
                         ok(adds.size()==1,"duplicate/absent add buttons");
-                        Container row=adds.get(0).getParent();ok(components(row,JLabel.class).stream().anyMatch(l->l.getText().contains("11월 22일")),"not beside date");
+                        Container row=adds.get(0).getParent();ok(components(row,JLabel.class).stream().anyMatch(l->l.getToolTipText()!=null&&l.getToolTipText().contains("11월 22일")),"not beside date");
                     });
                     test("left-actions-removed-favorite-preserved",()->{
                         List<String> labels=components(places.panel,JButton.class).stream().map(JButton::getText).toList();
                         ok(!labels.contains("이곳에 일정 추가")&&!labels.contains("이름 변경"),"old left actions remain");
-                        ok(labels.stream().anyMatch(t->t.contains("즐겨찾기")),"favorite removed");
+                        ok(labels.stream().anyMatch(t->t.contains("즐겨찾는 장소")),"favorite removed");
                     });
                     test("no-timetable-toolbar-add-button",()->ok(components(timetable,JButton.class).stream().noneMatch(b->"+ 일정 추가".equals(b.getText())),"old toolbar button"));
-                    test("right-add-defaults-and-selected-place",()->dialog(()->button(daily.panel,"일정 추가").doClick(),d->{
+                    test("right-add-defaults-and-selected-place",()->dialog(()->scheduleAdd(daily).doClick(),d->{
                         ok(radio(d,"매주 반복").isSelected()&&!radio(d,"선택한 날짜만").isSelected(),"wrong repeat default");
                         ok(category(d).getSelectedItem()==Category.CLASS,"wrong category default");
                         ok(DATE.toString().equals(date(d).getText()),"wrong date");
                         ok(!date(d).isEnabled(),"repeat date field enabled");
                         ok(building.equals(place(d).getSelectedItem()),"selected place lost");
                     }));
-                    test("common-entry-saves-one-off-and-restores-ui",()->dialog(()->button(daily.panel,"일정 추가").doClick(),d->{
+                    test("common-entry-saves-one-off-and-restores-ui",()->dialog(()->scheduleAdd(daily).doClick(),d->{
                         radio(d,"선택한 날짜만").doClick();category(d).setSelectedItem(Category.GROUP);
                         components(d,JTextField.class).get(0).setText("Entry test");
                         ok(date(d).isEnabled(),"date not enabled");d.getRootPane().getDefaultButton().doClick();
@@ -112,7 +115,7 @@ public final class ScheduleEntryWhiteBoxTest {
                         ok(model.events().get(0).date().equals(DATE),"saved wrong date");
                         ok(model.events().get(0).buildingId().equals(building.id()),"selected campus ID lost");
                     }));
-                    test("no-extra-add-buttons-after-population",()->ok(components(daily.panel,JButton.class).stream().filter(b->b.getText()!=null&&b.getText().contains("일정 추가")).count()==1,"slot buttons remain"));
+                    test("no-extra-add-buttons-after-population",()->ok(components(daily.panel,JButton.class).stream().filter(b->"schedule-add".equals(b.getName())).count()==1,"slot buttons remain"));
                     test("existing-one-off-retains-mode-category-date-time",()->dialog(()->timetable.editEvent(model.events().get(0)),d->{
                         ok(radio(d,"선택한 날짜만").isSelected()&&category(d).getSelectedItem()==Category.GROUP,"edit overwritten");
                         ok(date(d).getText().equals(DATE.toString()),"edit date changed");
@@ -140,7 +143,7 @@ public final class ScheduleEntryWhiteBoxTest {
                         });
                     });
                     test("custom-appointment-saves-and-reopens-in-daily-editor",()->{
-                        dialog(()->button(daily.panel,"일정 추가").doClick(),d->{
+                        dialog(()->scheduleAdd(daily).doClick(),d->{
                             radio(d,"선택한 날짜만").doClick();
                             components(d,JTextField.class).get(0).setText("화상 상담");
                             ((JTextField) category(d).getEditor().getEditorComponent()).setText("상담");
@@ -153,7 +156,7 @@ public final class ScheduleEntryWhiteBoxTest {
                         ok(external.categoryLabel().equals("상담") && external.category() == Category.OTHER, "custom kind lost");
                         ok(external.customPlace().equals("온라인 · 링크는 메모") && map.building(external.buildingId()) == null,
                                 "custom place was routed through the selected campus building");
-                        dialog(()->host.edit(external,false),d->{
+                        dialog(()->host.edit(external),d->{
                             ok(((JTextField) category(d).getEditor().getEditorComponent()).getText().equals("상담"),"custom kind lost on edit");
                             ok(directPlace(d).getText().equals(external.customPlace()),"custom place lost on edit");
                             d.getRootPane().getDefaultButton().doClick();
@@ -161,7 +164,7 @@ public final class ScheduleEntryWhiteBoxTest {
                         ok(model.events().contains(external),"saving edit changed the custom event");
                     });
                     test("custom-repeating-event-roundtrips-through-shared-xml",()->{
-                        dialog(()->button(daily.panel,"일정 추가").doClick(),d->{
+                        dialog(()->scheduleAdd(daily).doClick(),d->{
                             components(d,JTextField.class).get(0).setText("학외 회의");
                             ((JTextField) category(d).getEditor().getEditorComponent()).setText("외부 업무");
                             directPlace(d).setText("광주광역시청");

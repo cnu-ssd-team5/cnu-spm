@@ -1,15 +1,15 @@
 package campus.ui;
 import java.awt.*;
 import java.awt.image.BufferedImage;
-import javax.swing.*;
+import java.util.function.Consumer;
 
-/** Native tray notification with an always-visible in-app fallback. */
+/** Native tray notification with a caller-owned in-app fallback. */
 public final class NotificationCenter implements AutoCloseable {
-    private final JLabel status;
+    private final Consumer<String> notice;
     private TrayIcon tray;
     private boolean closed;
-    public NotificationCenter(JLabel status){
-        this.status=status;
+    public NotificationCenter(Consumer<String> notice){
+        this.notice=notice;
         try{
             if(!GraphicsEnvironment.isHeadless()&&SystemTray.isSupported()){
                 BufferedImage image=new BufferedImage(24,24,BufferedImage.TYPE_INT_ARGB);Graphics2D g=image.createGraphics();
@@ -21,7 +21,7 @@ public final class NotificationCenter implements AutoCloseable {
     public void show(String title,String message){
         if(closed)return;
         String text=title+": "+message;
-        status.setText("알림 · "+(text.length()>65?text.substring(0,65)+"…":text));status.setToolTipText(text);
+        notice.accept("알림 · "+text);
         if(tray!=null)try{tray.displayMessage(title,message,TrayIcon.MessageType.INFO);}catch(RuntimeException e){/* In-app notice remains available. */}
     }
     public boolean nativeAvailable(){return tray!=null;}

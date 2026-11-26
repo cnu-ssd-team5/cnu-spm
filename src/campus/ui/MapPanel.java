@@ -15,6 +15,10 @@ import campus.model.PlannerModel.Occurrence;
 import campus.service.DayPlanService.Leg;
 
 final class MapPanel extends JPanel {
+    private static final double MIN_ZOOM = 1;
+    private static final double MAX_ZOOM = 8;
+    private static final int HORIZONTAL_PADDING = 35;
+    private static final int VERTICAL_PADDING = 42;
     private final CampusMap data;
     private java.util.function.Function<Building,JPopupMenu> routeMenu;
     void setRouteMenu(java.util.function.Function<Building,JPopupMenu> menu){routeMenu=menu;}
@@ -44,6 +48,7 @@ final class MapPanel extends JPanel {
     private double panY;
     private Point dragOrigin;
     private boolean dragging;
+    private double dragDistance;
 
     MapPanel(CampusMap data, PlannerModel model, Consumer<Building> selection) {
         this.data = data;
@@ -60,14 +65,17 @@ final class MapPanel extends JPanel {
                 showMenu(e);
                 dragOrigin = SwingUtilities.isLeftMouseButton(e)?e.getPoint():null;
                 dragging = false;
+                dragDistance = 0;
             }
             @Override public void mouseDragged(MouseEvent e) {
                 if (dragOrigin == null) return;
                 double dx = e.getX() - dragOrigin.x;
                 double dy = e.getY() - dragOrigin.y;
-                if (Math.abs(dx) + Math.abs(dy) > 2) dragging = true;
+                dragDistance += Math.abs(dx) + Math.abs(dy);
+                if (dragDistance > 3) dragging = true;
                 panX += dx;
                 panY += dy;
+                constrainViewport();
                 dragOrigin = e.getPoint();
                 repaint();
             }
@@ -92,6 +100,25 @@ final class MapPanel extends JPanel {
         addMouseListener(mouse);
         addMouseMotionListener(mouse);
         addMouseWheelListener(mouse);
+    }
+
+    @Override public void setBounds(int x, int y, int width, int height) {
+        boolean resized = width != getWidth() || height != getHeight();
+        super.setBounds(x, y, width, height);
+        if (resized && data != null) constrainViewport();
+    }
+
+    /** Keep a fitted axis centred; larger map axes may pan only as far as their edges. */
+    private void constrainViewport() {
+        if (getWidth() <= 0 || getHeight() <= 0) { panX = panY = 0; return; }
+        double mapWidth = (data.maxLon() - data.minLon()) * longitudeScale * scale();
+        double mapHeight = (data.maxLat() - data.minLat()) * scale();
+        double paddingX = Math.min(HORIZONTAL_PADDING, getWidth() / 4.0);
+        double paddingY = Math.min(VERTICAL_PADDING, getHeight() / 4.0);
+        double horizontal = Math.max(0, (mapWidth - (getWidth() - 2 * paddingX)) / 2);
+        double vertical = Math.max(0, (mapHeight - (getHeight() - 2 * paddingY)) / 2);
+        panX = Math.max(-horizontal, Math.min(horizontal, panX));
+        panY = Math.max(-vertical, Math.min(vertical, panY));
     }
 
     private void showMenu(MouseEvent e) {
@@ -183,6 +210,7 @@ final class MapPanel extends JPanel {
                 panX+=getWidth()/2.0-p.getX();panY+=getHeight()/2.0-p.getY();
             }
         }
+        constrainViewport();
         repaint();
     }
 
@@ -190,12 +218,18 @@ final class MapPanel extends JPanel {
         zoomAt(factor, new Point(getWidth() / 2, getHeight() / 2));
     }
 
+    void resetView() {
+        zoom=1;panX=0;panY=0;repaint();
+    }
+
     private void zoomAt(double factor, Point anchor) {
-        double next = Math.max(0.25, Math.min(zoom * factor, 8));
+        if (!Double.isFinite(factor) || factor <= 0) return;
+        double next = Math.max(MIN_ZOOM, Math.min(zoom * factor, MAX_ZOOM));
         double ratio = next / zoom;
         panX = anchor.x - getWidth()/2.0 - (anchor.x - getWidth()/2.0 - panX) * ratio;
         panY = anchor.y - getHeight()/2.0 - (anchor.y - getHeight()/2.0 - panY) * ratio;
         zoom = next;
+        constrainViewport();
         repaint();
     }
 
@@ -257,10 +291,10 @@ final class MapPanel extends JPanel {
         g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
         for (MapWay way : data.ways()) {
             Color fill = switch (way.kind()) {
-                case "boundary" -> new Color(234, 241, 235);
-                case "water" -> new Color(179, 217, 233);
-                case "green" -> new Color(215, 232, 207);
-                case "pitch" -> new Color(199, 220, 188);
+                case "boundary" -> new Color(235, 242, 227);
+                case "water" -> new Color(181, 222, 244);
+                case "green" -> new Color(215, 233, 198);
+                case "pitch" -> new Color(201, 227, 185);
                 default -> null;
             };
             if (fill != null) {
@@ -297,9 +331,9 @@ final class MapPanel extends JPanel {
                 g.setColor(Color.WHITE);g.draw(new Ellipse2D.Double(xy.getX()-6,xy.getY()-6,12,12));continue;
             }
             Path2D shape = path(building.outline(), true);
-            g.setColor(selected ? new Color(134, 174, 252) : scheduled ? new Color(174, 199, 250) : new Color(218, 225, 231));
+            g.setColor(selected ? new Color(145, 184, 255) : scheduled ? new Color(191, 211, 252) : new Color(224, 228, 238));
             g.fill(shape);
-            g.setColor(selected || scheduled ? Theme.BLUE : new Color(176, 188, 201));
+            g.setColor(selected || scheduled ? Theme.BLUE : new Color(204, 212, 225));
             g.setStroke(new BasicStroke(selected ? 2 : 0.8f));
             g.draw(shape);
         }

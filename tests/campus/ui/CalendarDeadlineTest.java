@@ -134,7 +134,7 @@ public final class CalendarDeadlineTest {
                 }
             });
             test("single-panel-without-memo-input",()->{SchedulePanel p=new SchedulePanel(null,map,new PlannerModel());p.refresh(today,List.of(),List.of());ok(all(p.panel,JTextArea.class).isEmpty(),"memo editor remains");ok(p.panel.getComponentCount()==1,"separate bottom panel remains");});
-            test("deadline-list-moves-to-planner-and-leaves-sidebar", () -> {
+            test("planner-keeps-full-deadlines-and-sidebar-shows-a-summary", () -> {
                 PlannerModel model = new PlannerModel();
                 model.putDeadline(deadline("item", today, false));
                 DailyPlannerPanel planner = new DailyPlannerPanel(null, model);
@@ -143,9 +143,8 @@ public final class CalendarDeadlineTest {
                         && deadlineCards(planner).size() == 1, "planner deadline area missing");
                 SchedulePanel sidebar = new SchedulePanel(null, map, model);
                 sidebar.refresh(today, List.of(), List.of());
-                ok(all(sidebar.panel, JLabel.class).stream().noneMatch(label -> label.getText().contains("할일"))
-                        && all(sidebar.panel, JButton.class).stream().noneMatch(button -> "deadline:item".equals(button.getName())),
-                        "deadline content remains in schedule sidebar");
+                ok(all(sidebar.panel, JCheckBox.class).stream().anyMatch(item -> "summary-task:item".equals(item.getName()))
+                        && deadlineCards(planner).size()==1,"sidebar summary or full planner editor missing");
             });
             test("linked-deadline-visible-from-planner-day-through-due-date", () -> {
                 LocalDate due = today.plusDays(3);
@@ -200,7 +199,7 @@ public final class CalendarDeadlineTest {
                 SchedulePanel sidebar = new SchedulePanel(null, map, new PlannerModel());
                 sidebar.refresh(today, List.of(new Occurrence(late, today, false)), List.of());
                 List<String> labels = all(sidebar.panel, JLabel.class).stream().map(JLabel::getText).toList();
-                ok(labels.contains("1  23:00 – 24:00") && labels.stream().noneMatch(text -> text.contains("23:59")),
+                ok(labels.contains("23:00 – 24:00") && labels.stream().noneMatch(text -> text.contains("23:59")),
                         "midnight end shown as " + labels);
             });
             test("completed-deadline-keeps-its-due-day-status-only", () -> {

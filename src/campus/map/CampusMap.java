@@ -345,14 +345,6 @@ public final class CampusMap {
         return false;
     }
 
-    private static double segmentDistance(GeoPoint p, GeoPoint a, GeoPoint b) {
-        double cos = Math.cos(Math.toRadians(p.lat));
-        double dx = (b.lon-a.lon)*cos, dy = b.lat-a.lat;
-        double px = (p.lon-a.lon)*cos, py = p.lat-a.lat;
-        double denominator = dx*dx+dy*dy;
-        double f = denominator == 0 ? 0 : Math.max(0,Math.min(1,(px*dx+py*dy)/denominator));
-        return distance(p,new GeoPoint(a.lat+(b.lat-a.lat)*f,a.lon+(b.lon-a.lon)*f));
-    }
 
     private static final class Reader extends DefaultHandler {
         final Map<Long,Node> nodes = new LinkedHashMap<>();

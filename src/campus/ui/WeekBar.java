@@ -19,7 +19,7 @@ import campus.weather.WeatherBadge;
 
 /** 상단의 주간 달력. 날짜를 선택하거나 해당 날짜의 플래너를 엽니다. */
 final class WeekBar {
-    final JPanel panel = Theme.card(new BorderLayout(0, 13));
+    final JPanel panel = Theme.card(new BorderLayout(0, 12));
     private final MainFrame frame;
     private PlannerModel model;
     private final JLabel weekTitle = Theme.heading(" ", 19);
@@ -77,14 +77,14 @@ final class WeekBar {
             button.setToolTipText(description.isEmpty() ? hint : hint + " · " + description);
             button.getAccessibleContext().setAccessibleDescription(button.getToolTipText());
             if (forecast != null) {
-                button.setBorder(BorderFactory.createEmptyBorder(2, 3, 2, 3));
+                button.setBorder(BorderFactory.createEmptyBorder(4, 4, 4, 4));
                 button.setIcon(new WeatherBadge(forecast, button.getFontMetrics(Theme.font(11, Font.PLAIN))));
                 button.setVerticalTextPosition(SwingConstants.TOP);
                 button.setHorizontalTextPosition(SwingConstants.CENTER);
-                button.setIconTextGap(1);
+                button.setIconTextGap(4);
             } else if (button.getIcon() != null) {
                 button.setIcon(null);
-                button.setBorder(BorderFactory.createEmptyBorder(9, 13, 9, 13));
+                button.setBorder(BorderFactory.createEmptyBorder(8, 12, 8, 12));
                 button.setVerticalTextPosition(SwingConstants.CENTER);
                 button.setHorizontalTextPosition(SwingConstants.TRAILING);
                 button.setIconTextGap(4);

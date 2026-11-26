@@ -70,21 +70,4 @@ public final class FriendsDialog extends JDialog {
         rows.repaint();
     }
 
-    public static Icon icon() {
-        return new Icon() {
-            @Override public int getIconWidth() { return 18; }
-            @Override public int getIconHeight() { return 16; }
-            @Override public void paintIcon(Component c, Graphics graphics, int x, int y) {
-                Graphics2D g = (Graphics2D) graphics.create();
-                g.translate(x, y);
-                g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-                g.setColor(c.getForeground());
-                g.fillOval(2, 1, 6, 6);
-                g.fillOval(11, 3, 5, 5);
-                g.fillRoundRect(0, 8, 10, 7, 5, 5);
-                g.fillRoundRect(11, 9, 7, 6, 4, 4);
-                g.dispose();
-            }
-        };
-    }
 }
