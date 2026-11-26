@@ -1,6 +1,7 @@
 package campus.ui;
 
 import campus.model.PlannerModel.Occurrence;
+import campus.timetable.TimePicker;
 import java.awt.*;
 import java.awt.event.MouseEvent;
 import java.awt.event.MouseAdapter;
@@ -174,8 +175,8 @@ final class ScheduleClock extends JPanel {
 
     private static String scheduleText(Segment segment) {
         var event = segment.occurrence().event();
-        return "<html>" + Theme.html(event.title()) + " · " + event.start()
-                + "–" + (event.end().equals(LocalTime.MAX) ? "24:00" : event.end()) + "</html>";
+        return "<html>" + Theme.html(event.title()) + " · " + TimePicker.display(event.start())
+                + "–" + TimePicker.display(event.end()) + "</html>";
     }
 
     private void updateHover(MouseEvent event) {

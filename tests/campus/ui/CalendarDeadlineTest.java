@@ -194,6 +194,15 @@ public final class CalendarDeadlineTest {
                 ok(labels.stream().noneMatch(text -> text.contains("여유") || text.contains("추정") || text.contains("경로를 찾지")), "extra route lines");
                 ok(labels.contains("온라인") && labels.contains("화상 회의 · 이 날짜만"), "direct input missing from sidebar");
             });
+            test("sidebar-shows-midnight-end-as-24", () -> {
+                Event late = new Event("late", "야간 일정", map.buildings().get(0).id(), LocalTime.of(23,0), LocalTime.MAX,
+                        Category.OTHER, null, today, "");
+                SchedulePanel sidebar = new SchedulePanel(null, map, new PlannerModel());
+                sidebar.refresh(today, List.of(new Occurrence(late, today, false)), List.of());
+                List<String> labels = all(sidebar.panel, JLabel.class).stream().map(JLabel::getText).toList();
+                ok(labels.contains("1  23:00 – 24:00") && labels.stream().noneMatch(text -> text.contains("23:59")),
+                        "midnight end shown as " + labels);
+            });
             test("completed-deadline-keeps-its-due-day-status-only", () -> {
                 LocalDate due = today.plusDays(1);
                 PlannerModel model = new PlannerModel();

@@ -13,10 +13,10 @@ import campus.model.PlannerModel;
 import campus.model.PlannerModel.Event;
 import campus.model.PlannerModel.Occurrence;
 import campus.service.DayPlanService.Leg;
+import campus.timetable.TimePicker;
 
 /** 오른쪽의 하루 일정 카드와 일정 사이 이동 시간. */
 final class SchedulePanel {
-    private static final DateTimeFormatter CLOCK = DateTimeFormatter.ofPattern("HH:mm");
     private static final DateTimeFormatter DAY = DateTimeFormatter.ofPattern("M월 d일 EEEE", Locale.KOREAN);
     final JPanel panel = Theme.transparent(new BorderLayout(0,14));
     private final MainFrame frame;
@@ -116,7 +116,7 @@ final class SchedulePanel {
         c.fill=GridBagConstraints.HORIZONTAL;
         c.insets=new Insets(0,0,5,0);
         c.gridy=0;
-        JLabel time=Theme.heading((canceled ? "" : index+"  ")+event.start().format(CLOCK)+" – "+event.end().format(CLOCK),13);
+        JLabel time=Theme.heading((canceled ? "" : index+"  ")+TimePicker.display(event.start())+" – "+TimePicker.display(event.end()),13);
         time.setForeground(canceled ? Theme.MUTED : Theme.BLUE);
         details.add(time,c);
         c.gridy++;
