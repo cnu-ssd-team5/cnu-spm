@@ -87,6 +87,8 @@ public final class MainFrame extends JFrame {
     private final JLabel mapTitle = Theme.heading("하루의 지도", 17);
     private final JLabel mapSubtitle = Theme.label(" ", 12, Theme.MUTED);
     private final JLabel mapLegend = Theme.label("● 일정 순서   ━ 도보 경로   ● 즐겨찾기", 11, Theme.MUTED);
+    private static final String ROUTE_SWITCH_TIP = "수업 사이 도보 경로 선을 켜고 끕니다. 일정 번호와 이동 시간 요약은 그대로 보입니다.";
+    private final ToggleSwitch routeSwitch = new ToggleSwitch("경로 표시", true);
     private RouteDialog.Result searchedRoute;
     private final JLabel saveStatus = Theme.label("기기에 자동 저장", 11, Theme.MUTED);
     private final javax.swing.Timer noteTimer;
@@ -544,7 +546,10 @@ public final class MainFrame extends JFrame {
             CampusMap nextPlaces = friend == null ? null : placesFor(friend);
             RouteService nextRoutes = friend == null ? null : new RouteService(nextPlaces);
             MapPanel nextMap = friend == null ? null : new MapPanel(nextPlaces, friend.model(), this::selectBuilding);
-            if (nextMap != null) nextMap.setRouteMenu(this::routeMenu);
+            if (nextMap != null) {
+                nextMap.setRouteMenu(this::routeMenu);
+                nextMap.setScheduleRoutesVisible(routeSwitch.isSelected());
+            }
             folders.closePopup();
             activeFriend = friend;
             friendPlaces = nextPlaces;
@@ -706,7 +711,12 @@ public final class MainFrame extends JFrame {
         panel.add(mapCanvas, BorderLayout.CENTER);
         JPanel legend = Theme.transparent(new BorderLayout());
         legend.add(mapLegend,BorderLayout.WEST);
-        legend.add(Theme.button("일정 경로",false,this::showScheduleMap),BorderLayout.EAST);
+        routeSwitch.setToolTipText(ROUTE_SWITCH_TIP);
+        routeSwitch.addActionListener(e -> setScheduleRoutesVisible(routeSwitch.isSelected()));
+        JPanel legendActions = Theme.transparent(new FlowLayout(FlowLayout.RIGHT, 10, 0));
+        legendActions.add(routeSwitch);
+        legendActions.add(Theme.button("일정 경로",false,this::showScheduleMap));
+        legend.add(legendActions,BorderLayout.EAST);
         panel.add(legend,BorderLayout.SOUTH);
         return panel;
     }
@@ -747,7 +757,11 @@ public final class MainFrame extends JFrame {
     private void updateMapSummary() {
         boolean searching = searchedRoute != null;
         mapTitle.setText(searching ? "최단거리 검색" : "하루의 지도");
-        mapLegend.setText(searching ? "출발 → 도착   ━ 최단 도보 경로" : "● 일정 순서   ━ 도보 경로   ● 즐겨찾기");
+        // 최단거리 결과를 보는 동안에는 일정 경로를 그리지 않으므로 스위치를 잠근다.
+        routeSwitch.setEnabled(!searching);
+        routeSwitch.setToolTipText(searching ? "일정 경로 버튼으로 돌아가면 경로 표시를 켜고 끌 수 있습니다." : ROUTE_SWITCH_TIP);
+        mapLegend.setText(searching ? "출발 → 도착   ━ 최단 도보 경로"
+                : routeSwitch.isSelected() ? "● 일정 순서   ━ 도보 경로   ● 즐겨찾기" : "● 일정 순서   ● 즐겨찾기");
         mapSubtitle.setForeground(Theme.MUTED);
         if (searching) {
             RouteService.Route route = searchedRoute.route();
@@ -818,6 +832,12 @@ public final class MainFrame extends JFrame {
         updateMapSummary();
         revalidate();
         repaint();
+    }
+
+    private void setScheduleRoutesVisible(boolean visible) {
+        map.setScheduleRoutesVisible(visible);
+        if (friendMap != null) friendMap.setScheduleRoutesVisible(visible);
+        updateMapSummary();
     }
 
     void edit(Event event,boolean repeat) {

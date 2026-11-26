@@ -37,6 +37,7 @@ final class MapPanel extends JPanel {
     private Building searchFrom;
     private Building searchTo;
     private Route searchRoute;
+    private boolean scheduleRoutesVisible = true;
     private String selectedId;
     private double zoom = 1;
     private double panX;
@@ -161,6 +162,16 @@ final class MapPanel extends JPanel {
 
     boolean isSearchRouteActive() {
         return searchRoute != null;
+    }
+
+    /** 수업 사이 도보 경로 선만 숨긴다. 일정 번호와 최단거리 찾기 결과는 그대로 표시한다. */
+    void setScheduleRoutesVisible(boolean visible) {
+        scheduleRoutesVisible = visible;
+        repaint();
+    }
+
+    boolean scheduleRoutesVisible() {
+        return scheduleRoutesVisible;
     }
 
     void select(String id) {
@@ -294,7 +305,7 @@ final class MapPanel extends JPanel {
         }
         if (isSearchRouteActive()) {
             drawRoute(g, searchRoute);
-        } else {
+        } else if (scheduleRoutesVisible) {
             for (Leg leg : legs) drawRoute(g, leg.route());
         }
         List<Rectangle2D> occupied = new ArrayList<>();

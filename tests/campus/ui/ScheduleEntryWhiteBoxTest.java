@@ -124,6 +124,13 @@ public final class ScheduleEntryWhiteBoxTest {
                         ok(Arrays.stream(menu.getComponents()).anyMatch(c->c instanceof JMenuItem i&&"이름 변경".equals(i.getText())),"map rename removed");
                         dialog(add::doClick,d->ok(radio(d,"매주 반복").isSelected()&&category(d).getSelectedItem()==Category.CLASS,"context defaults differ"));
                     });
+                    test("map-route-switch-toggles-schedule-lines",()->{
+                        JToggleButton routes=components(host,JToggleButton.class).stream().filter(b->"경로 표시".equals(b.getText())).findFirst().orElseThrow();
+                        MapPanel shown=(MapPanel)field(host,"map");JLabel legend=(JLabel)field(host,"mapLegend");
+                        ok(routes instanceof ToggleSwitch&&routes.isSelected()&&shown.scheduleRoutesVisible(),"routes hidden by default");
+                        routes.doClick();ok(!shown.scheduleRoutesVisible()&&!legend.getText().contains("도보 경로"),"switch did not hide routes");
+                        routes.doClick();ok(shown.scheduleRoutesVisible()&&legend.getText().contains("도보 경로"),"switch did not restore routes");
+                    });
                     test("cancel-does-not-create-another-event",()->ok(model.events().size()==1,"cancel mutated model"));
                     test("direct-grid-editor-defaults",()->{
                         Method edit=TimetablePanel.class.getDeclaredMethod("edit",Event.class,DayOfWeek.class,LocalTime.class,LocalTime.class);edit.setAccessible(true);

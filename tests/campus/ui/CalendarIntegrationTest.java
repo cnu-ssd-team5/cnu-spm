@@ -64,6 +64,13 @@ public final class CalendarIntegrationTest {
         Point2D point=(Point2D)project.invoke(panel,map.building(id).center());
         return new Point((int)point.getX(),(int)point.getY());
     }
+    static int bluePixels(MapPanel panel) {
+        java.awt.image.BufferedImage image=new java.awt.image.BufferedImage(panel.getWidth(),panel.getHeight(),java.awt.image.BufferedImage.TYPE_INT_RGB);
+        Graphics2D g=image.createGraphics();panel.paint(g);g.dispose();
+        int count=0,blue=Theme.BLUE.getRGB();
+        for(int y=0;y<image.getHeight();y++)for(int x=0;x<image.getWidth();x++)if(image.getRGB(x,y)==blue)count++;
+        return count;
+    }
     static Transferable fileTransfer(Object payload) {
         return new Transferable() {
             public DataFlavor[] getTransferDataFlavors(){return new DataFlavor[]{DataFlavor.javaFileListFlavor};}
@@ -201,6 +208,21 @@ public final class CalendarIntegrationTest {
             panel.dispatchEvent(new MouseEvent(panel,MouseEvent.MOUSE_PRESSED,0,0,p.x,p.y,1,false,1));
             panel.dispatchEvent(new MouseEvent(panel,MouseEvent.MOUSE_DRAGGED,0,InputEvent.BUTTON1_DOWN_MASK,p.x+30,p.y+30,0,false,0));
             panel.dispatchEvent(new MouseEvent(panel,MouseEvent.MOUSE_RELEASED,0,0,p.x+30,p.y+30,1,false,1));ok(opened.get()==0,"drag opened folder");
+        }));
+        test("map-route-switch-hides-schedule-legs-only",()->onEdt(()->{
+            Occurrence first=new Occurrence(course("a","A",building),MONDAY,false),second=new Occurrence(course("b","B",otherBuilding),MONDAY,false);
+            double lat=map.maxLat()-map.minLat(),lon=map.maxLon()-map.minLon();
+            var line=new campus.map.RouteService.Route(List.of(new CampusMap.GeoPoint(map.minLat()+lat*.2,map.minLon()+lon*.2),
+                    new CampusMap.GeoPoint(map.minLat()+lat*.8,map.minLon()+lon*.8)),500,true,"");
+            MapPanel panel=new MapPanel(map,new PlannerModel(),v->{});panel.setSize(800,600);
+            panel.setOccurrences(List.of(first,second),List.of(new campus.service.DayPlanService.Leg(first,second,line)));
+            int shown=bluePixels(panel);panel.setScheduleRoutesVisible(false);int hidden=bluePixels(panel);
+            ok(!panel.scheduleRoutesVisible()&&shown>hidden+200,"schedule route still drawn");
+            panel.setSearchRoute(map.building(building),map.building(otherBuilding),new campus.map.RouteService.Route(List.of(),0,true,""));int noSearchLine=bluePixels(panel);
+            panel.setSearchRoute(map.building(building),map.building(otherBuilding),line);int searchHidden=bluePixels(panel);
+            panel.setScheduleRoutesVisible(true);
+            ok(searchHidden>noSearchLine+200&&bluePixels(panel)==searchHidden,"search route follows schedule switch");
+            panel.clearSearchRoute();ok(bluePixels(panel)==shown,"switch did not restore schedule route");
         }));
         test("time-picker-preserves-off-grid-imported-time",()->onEdt(()->{
             TimePicker picker=new TimePicker(false);LocalTime imported=LocalTime.of(7,3,14,123000000);picker.setTime(imported);ok(picker.time().equals(imported),"import rounded");
