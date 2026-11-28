@@ -16,13 +16,12 @@ public final class ScheduleSharing {
         Path path=chooser.getSelectedFile().toPath().toAbsolutePath();
         if(!path.toString().toLowerCase(java.util.Locale.ROOT).endsWith(".xml"))path=path.resolveSibling(path.getFileName()+".xml");
         if(Files.exists(path)&&JOptionPane.showConfirmDialog(owner,"기존 파일을 덮어쓸까요?","일정 공유",JOptionPane.YES_NO_OPTION)!=JOptionPane.YES_OPTION)return;
-        PlannerStore.save(path,model);
+        PlannerStore.saveSharedSchedule(path,model);
     }
-    public static boolean importFile(Component owner,PlannerModel model) throws IOException {
-        JFileChooser chooser=chooser();
-        if(chooser.showOpenDialog(owner)!=JFileChooser.APPROVE_OPTION)return false;
-        PlannerModel incoming=PlannerStore.load(chooser.getSelectedFile().toPath());
-        model.mergeFrom(incoming);return true;
+    public static PlannerModel readFile(Component owner) throws IOException {
+        JFileChooser chooser = chooser();
+        if (chooser.showOpenDialog(owner) != JFileChooser.APPROVE_OPTION) return null;
+        return PlannerStore.load(chooser.getSelectedFile().toPath());
     }
     private static JFileChooser chooser() {
         JFileChooser chooser=new JFileChooser();chooser.setFileFilter(new FileNameExtensionFilter("일정 XML","xml"));return chooser;

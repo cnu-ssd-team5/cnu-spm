@@ -1,5 +1,6 @@
 package campus.folder.ui;
 import campus.folder.storage.*;
+import campus.ui.Theme;
 import javax.swing.*;
 import java.awt.*;
 import java.awt.event.*;
@@ -341,21 +342,27 @@ public final class MiniFolderPopup extends JDialog {
         });
         m.add(i);
     }
-    private void menu(MouseEvent e) {
+    private void menu(MouseEvent e) { contextMenu().show(list,e.getX(),e.getY()); }
+    private JPopupMenu contextMenu() {
         JPopupMenu m=new JPopupMenu();
         if(!list.isSelectionEmpty()) {
             item(m,"열기",this::open);
             item(m,"복사 · Ctrl+C",()->copy(false));
             item(m,"잘라내기 · Ctrl+X",()->copy(true));
             item(m,"이름 변경 · F2",this::rename);
-            item(m,"삭제 · Delete",this::delete);
+            m.add(Theme.deleteMenuItem("삭제 · Delete", () -> { if (!working) delete(); }));
             m.addSeparator();
         }
         item(m,"붙여넣기 · Ctrl+V",this::paste);
         item(m,"실행 취소 · Ctrl+Z",()->run(()->operations.undo()));
         item(m,list.isSelectionEmpty()?"새 폴더":"선택 항목을 새 폴더에 담기",()->create(false));
         item(m,"새 메모",()->create(true));
+        m.addSeparator();
+        item(m,"원본 폴더 열기",()->{
+            try { FolderService.openDirectory(service.checked(current)); }
+            catch(Exception error) { error(error); }
+        });
 
-        m.show(list,e.getX(),e.getY());
+        return m;
     }
 }

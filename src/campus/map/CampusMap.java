@@ -1,5 +1,9 @@
 package campus.map;
 
+import campus.map.OsmReader.Member;
+import campus.map.OsmReader.Relation;
+import campus.map.OsmReader.Bounds;
+import campus.map.OsmReader.Data;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
@@ -15,13 +19,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import javax.xml.XMLConstants;
-import javax.xml.parsers.SAXParserFactory;
-import org.xml.sax.Attributes;
-import org.xml.sax.SAXException;
-import org.xml.sax.helpers.DefaultHandler;
 
-/** An offline OSM extract of the campus: boundary, buildings and the shapes drawn on the map. */
+/** 한 학교의 지도 데이터: 경계, 건물, 도로와 사용자 장소를 관리합니다. */
 public final class CampusMap {
     public record GeoPoint(double lat, double lon) { }
     public record Building(String id, String name, List<GeoPoint> outline, GeoPoint center) {
@@ -34,35 +33,59 @@ public final class CampusMap {
 
     record Node(long id, GeoPoint point, Map<String,String> tags) { }
     record Way(long id, List<Long> refs, Map<String,String> tags) { }
-    private record Member(long ref, String role) { }
-    private record Relation(long id, List<Member> members, Map<String,String> tags) { }
 
     static final String BUNDLED_OSM = "/map/chonnam-campus.osm";
-    private static final double EARTH_RADIUS = 6_371_008.8;
-    final List<Building> buildings = new ArrayList<>();
-    final Map<String, List<Long>> buildingRefs = new HashMap<>();
-    final List<List<GeoPoint>> obstacles = new ArrayList<>();
-    final Map<Long, Node> nodes;
-    final Map<Long, Way> osmWays;
+    private final List<Building> buildings = new ArrayList<>();
+    private final Map<String, List<Long>> buildingRefs = new HashMap<>();
+    private final List<List<GeoPoint>> obstacles = new ArrayList<>();
+    private final Map<Long, Node> nodes;
+    private final Map<Long, Way> osmWays;
     private final List<MapWay> ways = new ArrayList<>();
     private final Map<String, String> originalNames = new HashMap<>();
+    /** 사용자 이름 변경 전 OSM 이름. 시간표별 지도 사본이 이 이름으로 시작한다. */
+    private final Map<String, String> baseNames = new HashMap<>();
     private final Map<String, Building> byId = new LinkedHashMap<>();
     private List<GeoPoint> boundary = List.of();
-    private double minLat, maxLat, minLon, maxLon;
-    private double[] extractBounds;
+    private String campusId;
+    private String campusName;
+    private double minLat;
+    private double maxLat;
+    private double minLon;
+    private double maxLon;
+    private Bounds extractBounds;
 
-    private CampusMap(Reader source) {
-        nodes = source.nodes;
-        osmWays = source.ways;
+    private CampusMap(Data source) {
+        nodes = source.nodes();
+        osmWays = source.ways();
     }
 
-    /** 프로그램에 포함된 전남대 지도(resources/map)를 읽습니다. 실행 위치와 상관없이 동작합니다. */
-    public static CampusMap loadBundled() throws IOException {
-        try (InputStream input = CampusMap.class.getResourceAsStream(BUNDLED_OSM)) {
-            if (input == null) throw new IOException("프로그램에 포함된 지도 데이터를 찾을 수 없습니다: " + BUNDLED_OSM);
-            return load(input);
+    private CampusMap(CampusMap source) {
+        nodes = source.nodes;
+        osmWays = source.osmWays;
+        ways.addAll(source.ways);
+        buildingRefs.putAll(source.buildingRefs);
+        obstacles.addAll(source.obstacles);
+        baseNames.putAll(source.baseNames);
+        boundary = source.boundary;
+        campusId = source.campusId;
+        campusName = source.campusName;
+        minLat = source.minLat;
+        maxLat = source.maxLat;
+        minLon = source.minLon;
+        maxLon = source.maxLon;
+        extractBounds = source.extractBounds;
+        for (Building place : source.buildings) {
+            if (!place.id().startsWith("pin:")) {
+                String originalName = source.originalName(place.id());
+                originalNames.put(place.id(), originalName);
+                String name = baseNames.getOrDefault(place.id(), originalName);
+                putPlace(new Building(place.id(), name, place.outline(), place.center()));
+            }
         }
     }
+
+    /** 사용자 핀과 이름 변경을 제외한 장소 사본. OSM 원본 데이터는 공유한다. */
+    public CampusMap copyBasePlaces() { return new CampusMap(this); }
 
     public static CampusMap load(Path file) throws IOException {
         if (!Files.isRegularFile(file)) throw new IOException("OSM 파일을 찾을 수 없습니다: " + file);
@@ -72,101 +95,242 @@ public final class CampusMap {
     }
 
     private static CampusMap load(InputStream input) throws IOException {
-        Reader reader = new Reader();
-        try {
-            SAXParserFactory factory = SAXParserFactory.newInstance();
-            factory.setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true);
-            factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
-            factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
-            factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
-            factory.newSAXParser().parse(input, reader);
-        } catch (Exception ex) {
-            throw new IOException("OSM XML을 읽을 수 없습니다.", ex);
-        }
-        CampusMap result = new CampusMap(reader);
-        result.initialize(reader);
+        Data source = OsmReader.read(input);
+        CampusMap result = new CampusMap(source);
+        result.initialize(source);
         return result;
     }
 
     public List<Building> buildings() { return Collections.unmodifiableList(buildings); }
     public List<MapWay> ways() { return Collections.unmodifiableList(ways); }
     public Building building(String id) { return byId.get(id); }
-    public String originalName(String id) { return originalNames.getOrDefault(id, building(id).name()); }
+    Node node(long id) { return nodes.get(id); }
+    Iterable<Way> osmWays() { return Collections.unmodifiableCollection(osmWays.values()); }
+    List<List<GeoPoint>> waterObstacles() { return Collections.unmodifiableList(obstacles); }
+    List<Long> buildingNodeIds(String id) {
+        List<Long> refs = buildingRefs.get(id);
+        return refs == null ? List.of() : Collections.unmodifiableList(refs);
+    }
+    public String originalName(String id) {
+        String original = originalNames.get(id);
+        if (original != null) {
+            return original;
+        }
+        Building place = building(id);
+        return place == null ? "" : place.name();
+    }
     public void putPlace(Building place) {
         originalNames.putIfAbsent(place.id(), place.name());
         buildings.removeIf(b -> b.id().equals(place.id()));
-        buildings.add(place); byId.put(place.id(), place);
+        buildings.add(place);
+        byId.put(place.id(), place);
     }
     public void removePlace(String id) {
-        if (!id.startsWith("pin:")) return;
-        buildings.removeIf(b -> b.id().equals(id)); byId.remove(id);
+        if (!id.startsWith("pin:")) {
+            return;
+        }
+        buildings.removeIf(b -> b.id().equals(id));
+        byId.remove(id);
+        originalNames.remove(id);
     }
 
     public double minLat() { return minLat; }
     public double maxLat() { return maxLat; }
     public double minLon() { return minLon; }
     public double maxLon() { return maxLon; }
-    public String attribution() { return "© OpenStreetMap contributors · ODbL 1.0"; }
+    public String campusId() { return campusId; }
+    public String campusName() { return campusName; }
 
-    private void initialize(Reader source) throws IOException {
-        Way campus = source.ways.values().stream()
-                .filter(w -> "university".equals(w.tags.get("amenity")))
-                .filter(w -> name(w.tags).contains("전남대학교") || name(w.tags).contains("Chonnam"))
-                .max(Comparator.comparingInt(w -> w.refs.size())).orElse(null);
-        if (campus == null) throw new IOException("전남대학교 캠퍼스 경계가 포함된 OSM 파일이 필요합니다.");
-        extractBounds=source.bounds;
-        boundary = points(campus.refs, source.nodes);
-        if (boundary.size() < 4) throw new IOException("캠퍼스 경계 노드가 누락되었습니다.");
+    private void initialize(Data source) throws IOException {
+        setCampusBoundary(source);
+        Set<Long> relationMembers = addRelationBuildings(source);
+        addWays(relationMembers);
+        addBusStops();
+        rememberOriginalNames();
+        if (buildings.isEmpty()) {
+            throw new IOException("캠퍼스 건물이 없습니다.");
+        }
+        buildings.sort(Comparator.comparing(Building::name, Collator.getInstance(Locale.KOREAN)));
+    }
+
+    private void setCampusBoundary(Data source) throws IOException {
+        CampusBoundary campus = findCampusBoundary(source);
+        campusId = campus.id();
+        campusName = campus.name().isBlank() ? "캠퍼스" : campus.name();
+        extractBounds = source.bounds();
+        boundary = campus.points();
         minLat = boundary.stream().mapToDouble(GeoPoint::lat).min().orElseThrow();
         maxLat = boundary.stream().mapToDouble(GeoPoint::lat).max().orElseThrow();
         minLon = boundary.stream().mapToDouble(GeoPoint::lon).min().orElseThrow();
         maxLon = boundary.stream().mapToDouble(GeoPoint::lon).max().orElseThrow();
-        ways.add(new MapWay("w" + campus.id, "boundary", boundary));
+        ways.add(new MapWay(campusId, "boundary", boundary));
+    }
 
+    private static CampusBoundary findCampusBoundary(Data source) throws IOException {
+        List<CampusBoundary> campuses = new ArrayList<>();
+        for (Way way : source.ways().values()) {
+            if (OsmTags.isUniversity(way.tags())) {
+                addCampus(campuses, "w" + way.id(), way.tags(), points(way.refs(), source.nodes()));
+            }
+        }
+        // shortcut: 관계는 하나의 외곽선만 지원합니다. 분리된 캠퍼스까지 필요하면 다중 외곽선 처리를 추가합니다.
+        for (Relation relation : source.relations()) {
+            if (OsmTags.isUniversity(relation.tags())) {
+                List<Long> refs = outerRing(relation, source.ways());
+                addCampus(campuses, "r" + relation.id(), relation.tags(), points(refs, source.nodes()));
+            }
+        }
+        // 주변 대학이 함께 들어온 파일은 면적이 가장 큰 캠퍼스를 표시합니다.
+        return largestCampus(campuses);
+    }
+
+    private static CampusBoundary largestCampus(List<CampusBoundary> campuses) throws IOException {
+        CampusBoundary largest = null;
+        double largestArea = -1;
+        for (CampusBoundary candidate : campuses) {
+            double area = MapGeometry.area(candidate.points());
+            int comparison = Double.compare(area, largestArea);
+            if (largest == null || comparison > 0
+                    || comparison == 0 && candidate.id().compareTo(largest.id()) > 0) {
+                largest = candidate;
+                largestArea = area;
+            }
+        }
+        if (largest == null) {
+            throw new IOException("amenity=university인 닫힌 캠퍼스 경계와 경계 노드가 포함된 OSM 파일이 필요합니다.");
+        }
+        return largest;
+    }
+
+    private Set<Long> addRelationBuildings(Data source) {
         Set<Long> relationMembers = new HashSet<>();
-        for (Relation relation : source.relations) {
-            if (!relation.tags.containsKey("building") || "no".equals(relation.tags.get("building"))) continue;
-            List<Long> refs = outerRing(relation, source.ways);
-            List<GeoPoint> outline = points(refs, source.nodes);
-            if (!addBuilding("r" + relation.id, relation.tags, outline)) continue;
-            buildingRefs.put("r" + relation.id, refs);
-            relation.members.forEach(m -> relationMembers.add(m.ref));
-        }
-        for (Way way : source.ways.values()) {
-            List<GeoPoint> outline = points(way.refs, source.nodes);
-            if (outline.size() < 2) continue;
-            if (way.tags.containsKey("building") && !"no".equals(way.tags.get("building"))
-                    && !relationMembers.contains(way.id)) {
-                if (addBuilding("w" + way.id, way.tags, outline)) buildingRefs.put("w" + way.id, way.refs);
+        for (Relation relation : source.relations()) {
+            if (!OsmTags.isBuilding(relation.tags())) {
+                continue;
             }
-            String kind = kind(way.tags);
-            if (kind != null && outline.stream().anyMatch(this::inExtractBounds)) {
-                ways.add(new MapWay("w" + way.id, kind, outline));
-                if ("water".equals(kind)) obstacles.add(outline);
+            List<Long> refs = outerRing(relation, source.ways());
+            List<GeoPoint> outline = points(refs, source.nodes());
+            if (!addBuilding("r" + relation.id(), relation.tags(), outline)) {
+                continue;
+            }
+            buildingRefs.put("r" + relation.id(), refs);
+            for (Member member : relation.members()) {
+                relationMembers.add(member.ref());
             }
         }
-        for(Node node:nodes.values())if(busPlatform(node.tags))addBusStop("bus:n"+node.id,node.tags,node.point);
-        for(Way way:osmWays.values())if(busPlatform(way.tags)) {
-            List<GeoPoint> shape=points(way.refs,nodes);
-            if(!shape.isEmpty())addBusStop("bus:w"+way.id,way.tags,centroid(shape));
+        return relationMembers;
+    }
+
+    private void addWays(Set<Long> relationMembers) {
+        for (Way way : osmWays.values()) {
+            List<GeoPoint> outline = points(way.refs(), nodes);
+            if (outline.size() < 2) {
+                continue;
+            }
+            addWayBuilding(way, outline, relationMembers);
+            addDisplayWay(way, outline);
         }
-        for(Node node:nodes.values()) {
-            if(!"stop_position".equals(node.tags.get("public_transport"))||!"yes".equals(node.tags.get("bus")))continue;
-            String title=name(node.tags);
-            if(buildings.stream().noneMatch(b->b.id().startsWith("bus:")&&originalNames.get(b.id()).equals(title)&&distance(b.center(),node.point)<75))
-                addBusStop("bus:n"+node.id,node.tags,node.point);
+    }
+
+    private void addWayBuilding(Way way, List<GeoPoint> outline, Set<Long> relationMembers) {
+        if (OsmTags.isBuilding(way.tags()) && !relationMembers.contains(way.id())) {
+            String id = "w" + way.id();
+            if (addBuilding(id, way.tags(), outline)) {
+                buildingRefs.put(id, way.refs());
+            }
         }
-        buildings.forEach(b -> originalNames.putIfAbsent(b.id(), b.name().equals("이름없는 건물")?"이름 없는 건물 · "+b.id():b.name()));
-        if (buildings.isEmpty()) throw new IOException("캠퍼스 건물이 없습니다.");
-        buildings.sort(Comparator.comparing(Building::name, Collator.getInstance(Locale.KOREAN)));
+    }
+
+    private void addDisplayWay(Way way, List<GeoPoint> outline) {
+        String kind = OsmTags.displayKind(way.tags());
+        if (kind == null || outline.stream().noneMatch(this::inExtractBounds)) {
+            return;
+        }
+        ways.add(new MapWay("w" + way.id(), kind, outline));
+        if ("water".equals(kind)) {
+            obstacles.add(outline);
+        }
+    }
+
+    private void addBusStops() {
+        addBusPlatforms();
+        addBusStopPositions();
+    }
+
+    private void addBusPlatforms() {
+        for (Node node : nodes.values()) {
+            if (OsmTags.isBusPlatform(node.tags())) {
+                addBusStop("bus:n" + node.id(), node.tags(), node.point());
+            }
+        }
+        for (Way way : osmWays.values()) {
+            if (OsmTags.isBusPlatform(way.tags())) {
+                List<GeoPoint> shape = points(way.refs(), nodes);
+                if (!shape.isEmpty()) {
+                    addBusStop("bus:w" + way.id(), way.tags(), MapGeometry.center(shape));
+                }
+            }
+        }
+    }
+
+    private void addBusStopPositions() {
+        for (Node node : nodes.values()) {
+            if (!OsmTags.isBusStopPosition(node.tags())) {
+                continue;
+            }
+            if (!hasNearbyBusStop(OsmTags.name(node.tags()), node.point())) {
+                addBusStop("bus:n" + node.id(), node.tags(), node.point());
+            }
+        }
+    }
+
+    private boolean hasNearbyBusStop(String title, GeoPoint point) {
+        for (Building place : buildings) {
+            if (place.id().startsWith("bus:") && originalNames.get(place.id()).equals(title)
+                    && distance(place.center(), point) < 75) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void rememberOriginalNames() {
+        for (Building building : buildings) {
+            String name = building.name().equals("이름없는 건물")
+                    ? "이름 없는 건물 · " + building.id() : building.name();
+            originalNames.putIfAbsent(building.id(), name);
+        }
+    }
+
+    private record CampusBoundary(String id, String name, List<GeoPoint> points) { }
+
+    private static void addCampus(List<CampusBoundary> campuses, String id, Map<String,String> tags, List<GeoPoint> outline) {
+        if (!OsmTags.isUniversity(tags) || !MapGeometry.isClosedPolygon(outline)) {
+            return;
+        }
+        for (GeoPoint point : outline) {
+            if (!MapGeometry.isValid(point)) {
+                return;
+            }
+        }
+        if (MapGeometry.area(outline) > 0) {
+            campuses.add(new CampusBoundary(id, OsmTags.name(tags), outline));
+        }
     }
 
     private boolean addBuilding(String id, Map<String,String> tags, List<GeoPoint> outline) {
-        if (outline.size() < 4 || !outline.get(0).equals(outline.get(outline.size()-1))) return false;
-        GeoPoint center = centroid(outline);
-        if (!inside(center, boundary) && outline.stream().noneMatch(p -> inside(p, boundary))) return false;
-        String title = name(tags);
-        if (title.isBlank()) title = "이름없는 건물";
+        if (!MapGeometry.isClosedPolygon(outline)) {
+            return false;
+        }
+        GeoPoint center = MapGeometry.center(outline);
+        if (!MapGeometry.contains(center, boundary) && outline.stream().noneMatch(p -> MapGeometry.contains(p, boundary))) {
+            return false;
+        }
+        String title = OsmTags.name(tags);
+        if (title.isBlank()) {
+            title = "이름없는 건물";
+        }
+        baseNames.put(id, title);
         Building building = new Building(id, title, outline, center);
         buildings.add(building);
         byId.put(id, building);
@@ -178,42 +342,22 @@ public final class CampusMap {
                 && p.lon >= minLon-0.00055 && p.lon <= maxLon+0.00055;
     }
 
-    private static boolean busPlatform(Map<String,String> tags) {
-        return "bus_stop".equals(tags.get("highway"))
-                || "platform".equals(tags.get("public_transport"))&&"yes".equals(tags.get("bus"));
-    }
-    private void addBusStop(String id,Map<String,String> tags,GeoPoint point) {
-        String title=name(tags);
-        if(title.isBlank()||!inExtractBounds(point))return;
-        putPlace(new Building(id,title,List.of(point),point));
-        originalNames.put(id,title);
+    private void addBusStop(String id, Map<String,String> tags, GeoPoint point) {
+        String title = OsmTags.name(tags);
+        if (title.isBlank() || !inExtractBounds(point)) {
+            return;
+        }
+        putPlace(new Building(id, title, List.of(point), point));
+        originalNames.put(id, title);
+        baseNames.put(id, title);
     }
     private boolean inExtractBounds(GeoPoint p) {
-        return extractBounds==null?inDisplayBounds(p):p.lat>=extractBounds[0]&&p.lon>=extractBounds[1]
-                &&p.lat<=extractBounds[2]&&p.lon<=extractBounds[3];
+        if (extractBounds == null) {
+            return inDisplayBounds(p);
+        }
+        return extractBounds.contains(p);
     }
     boolean nearCampus(GeoPoint p) { return inExtractBounds(p); }
-
-    private static String kind(Map<String,String> tags) {
-        if ("water".equals(tags.get("natural")) || "riverbank".equals(tags.get("waterway")) || tags.containsKey("water")) return "water";
-        if (Set.of("pitch","track").contains(tags.getOrDefault("leisure",""))) return "pitch";
-        if (Set.of("park","garden").contains(tags.getOrDefault("leisure",""))
-                || Set.of("grass","forest","meadow","recreation_ground").contains(tags.getOrDefault("landuse",""))
-                || Set.of("wood","scrub","grassland").contains(tags.getOrDefault("natural",""))) return "green";
-        String highway = tags.getOrDefault("highway", "");
-        if (highway.equals("steps")) return "steps";
-        if (Set.of("footway","pedestrian","path","cycleway").contains(highway)) return "footway";
-        if (!highway.isEmpty() && !Set.of("construction","proposed","corridor").contains(highway)) return "road";
-        return null;
-    }
-
-    private static String name(Map<String,String> tags) {
-        for (String key : List.of("name:ko","name","official_name","name:en","ref")) {
-            String value = tags.getOrDefault(key,"");
-            if (!value.isBlank()) return value;
-        }
-        return "";
-    }
 
     static List<GeoPoint> points(List<Long> refs, Map<Long,Node> nodes) {
         List<GeoPoint> result = new ArrayList<>();
@@ -225,114 +369,45 @@ public final class CampusMap {
         return result;
     }
 
+    /** 여러 way의 끝점 ID를 맞춰 하나의 외곽선으로 연결합니다. */
     private static List<Long> outerRing(Relation relation, Map<Long,Way> ways) {
         List<List<Long>> pieces = new ArrayList<>();
-        for (Member member : relation.members) {
-            if (!member.role.isEmpty() && !member.role.equals("outer")) continue;
-            Way way = ways.get(member.ref);
-            if (way != null && !way.refs.isEmpty()) pieces.add(new ArrayList<>(way.refs));
+        for (Member member : relation.members()) {
+            if (!member.role().isEmpty() && !member.role().equals("outer")) {
+                continue;
+            }
+            Way way = ways.get(member.ref());
+            if (way != null && !way.refs.isEmpty()) {
+                pieces.add(new ArrayList<>(way.refs));
+            }
         }
-        if (pieces.isEmpty()) return List.of();
+        if (pieces.isEmpty()) {
+            return List.of();
+        }
         List<Long> ring = new ArrayList<>(pieces.remove(0));
         while (!pieces.isEmpty() && !ring.get(0).equals(ring.get(ring.size()-1))) {
             boolean joined = false;
             for (int i = 0; i < pieces.size(); i++) {
                 List<Long> piece = pieces.get(i);
                 long last = ring.get(ring.size()-1);
-                if (piece.get(piece.size()-1) == last) Collections.reverse(piece);
+                if (piece.get(piece.size()-1) == last) {
+                    Collections.reverse(piece);
+                }
                 if (piece.get(0) == last) {
-                    ring.addAll(piece.subList(1,piece.size())); pieces.remove(i); joined = true; break;
+                    ring.addAll(piece.subList(1,piece.size()));
+                    pieces.remove(i);
+                    joined = true;
+                    break;
                 }
             }
-            if (!joined) return List.of();
+            if (!joined) {
+                return List.of();
+            }
         }
         return ring;
     }
 
     public static double distance(GeoPoint a, GeoPoint b) {
-        double dLat = Math.toRadians(b.lat-a.lat), dLon = Math.toRadians(b.lon-a.lon);
-        double h = Math.sin(dLat/2)*Math.sin(dLat/2)
-                + Math.cos(Math.toRadians(a.lat))*Math.cos(Math.toRadians(b.lat))*Math.sin(dLon/2)*Math.sin(dLon/2);
-        return 2*EARTH_RADIUS*Math.asin(Math.min(1,Math.sqrt(h)));
-    }
-
-    private static GeoPoint centroid(List<GeoPoint> polygon) {
-        double x = 0, y = 0, area = 0;
-        GeoPoint origin = polygon.get(0);
-        for (int i = 1; i < polygon.size(); i++) {
-            GeoPoint a = polygon.get(i-1), b = polygon.get(i);
-            double cross = (a.lon-origin.lon)*(b.lat-origin.lat)-(b.lon-origin.lon)*(a.lat-origin.lat);
-            area += cross;
-            x += (a.lon+b.lon-2*origin.lon)*cross;
-            y += (a.lat+b.lat-2*origin.lat)*cross;
-        }
-        if (Math.abs(area) < 1e-16) return new GeoPoint(polygon.stream().mapToDouble(GeoPoint::lat).average().orElseThrow(),polygon.stream().mapToDouble(GeoPoint::lon).average().orElseThrow());
-        return new GeoPoint(origin.lat+y/(3*area),origin.lon+x/(3*area));
-    }
-
-    static boolean inside(GeoPoint p, List<GeoPoint> polygon) {
-        boolean inside = false;
-        for (int i = 0,j = polygon.size()-1; i < polygon.size(); j = i++) {
-            GeoPoint a = polygon.get(i), b = polygon.get(j);
-            if ((a.lat>p.lat) != (b.lat>p.lat) && p.lon < (b.lon-a.lon)*(p.lat-a.lat)/(b.lat-a.lat)+a.lon) inside = !inside;
-        }
-        return inside;
-    }
-
-    static boolean intersectsPolygon(GeoPoint a, GeoPoint b, List<GeoPoint> polygon) {
-        if (inside(a,polygon) || inside(b,polygon)) return true;
-        for (int i = 1; i < polygon.size(); i++) {
-            GeoPoint c = polygon.get(i-1), d = polygon.get(i);
-            if (java.awt.geom.Line2D.linesIntersect(a.lon,a.lat,b.lon,b.lat,c.lon,c.lat,d.lon,d.lat)) return true;
-        }
-        return false;
-    }
-
-    private static double segmentDistance(GeoPoint p, GeoPoint a, GeoPoint b) {
-        double cos = Math.cos(Math.toRadians(p.lat));
-        double dx = (b.lon-a.lon)*cos, dy = b.lat-a.lat;
-        double px = (p.lon-a.lon)*cos, py = p.lat-a.lat;
-        double denominator = dx*dx+dy*dy;
-        double f = denominator == 0 ? 0 : Math.max(0,Math.min(1,(px*dx+py*dy)/denominator));
-        return distance(p,new GeoPoint(a.lat+(b.lat-a.lat)*f,a.lon+(b.lon-a.lon)*f));
-    }
-
-    private static final class Reader extends DefaultHandler {
-        final Map<Long,Node> nodes = new LinkedHashMap<>();
-        final Map<Long,Way> ways = new LinkedHashMap<>();
-        final List<Relation> relations = new ArrayList<>();
-        double[] bounds;
-        String type;
-        long id;
-        GeoPoint point;
-        Map<String,String> tags;
-        List<Long> refs;
-        List<Member> members;
-        @Override public void startElement(String uri,String local,String q,Attributes a) throws SAXException {
-            try {
-                if(q.equals("bounds")) {
-                    bounds=new double[]{Double.parseDouble(a.getValue("minlat")),Double.parseDouble(a.getValue("minlon")),
-                            Double.parseDouble(a.getValue("maxlat")),Double.parseDouble(a.getValue("maxlon"))};
-                } else if (Set.of("node","way","relation").contains(q)) {
-                    type = q; id = Long.parseLong(a.getValue("id")); tags = new HashMap<>();
-                    if (q.equals("node")) point = new GeoPoint(Double.parseDouble(a.getValue("lat")),Double.parseDouble(a.getValue("lon")));
-                    if (q.equals("way")) refs = new ArrayList<>();
-                    if (q.equals("relation")) members = new ArrayList<>();
-                } else if (q.equals("tag") && tags != null) {
-                    tags.put(a.getValue("k"),a.getValue("v"));
-                } else if (q.equals("nd") && "way".equals(type)) {
-                    refs.add(Long.parseLong(a.getValue("ref")));
-                } else if (q.equals("member") && "relation".equals(type) && "way".equals(a.getValue("type"))) {
-                    members.add(new Member(Long.parseLong(a.getValue("ref")),a.getValue("role")));
-                }
-            } catch (RuntimeException ex) { throw new SAXException("잘못된 OSM 요소",ex); }
-        }
-        @Override public void endElement(String uri,String local,String q) {
-            if (!q.equals(type)) return;
-            if (q.equals("node")) nodes.put(id,new Node(id,point,tags));
-            if (q.equals("way")) ways.put(id,new Way(id,refs,tags));
-            if (q.equals("relation")) relations.add(new Relation(id,members,tags));
-            type = null; tags = null;
-        }
+        return MapGeometry.distance(a, b);
     }
 }

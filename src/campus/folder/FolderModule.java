@@ -3,8 +3,7 @@ package campus.folder;
 import campus.map.CampusMap;
 import campus.map.CampusMap.Building;
 import campus.model.PlannerModel;
-import campus.folder.storage.*;
-import campus.folder.ui.*;
+import campus.ui.*;
 import javax.swing.*;
 import java.awt.*;
 import java.awt.datatransfer.DataFlavor;
@@ -30,9 +29,6 @@ public final class FolderModule implements AutoCloseable {
     private final List<Runnable> updates = new ArrayList<>();
     private final List<Runnable> detachments = new ArrayList<>();
     private boolean closed;
-    private Function<Building,Building> beforeOpen=Function.identity();
-    public void setBeforeOpen(Function<Building,Building> action) { beforeOpen=java.util.Objects.requireNonNull(action); }
-
     public FolderModule(Path dataDirectory, CampusMap map, PlannerModel model) throws IOException {
         this.map = map;
         this.model=model;
@@ -49,6 +45,7 @@ public final class FolderModule implements AutoCloseable {
             FolderService service = new FolderService(dataDirectory.resolve("buildings"));
             catalog.migrate(service);
             controller = new BuildingFolderController(service, catalog);
+            controller.setFolderChanged(this::refreshRecent);
         } catch (IOException | RuntimeException e) { lock.release(); channel.close(); throw e; }
     }
 
@@ -107,16 +104,18 @@ public final class FolderModule implements AutoCloseable {
         if(scheduleSync.sync()) { controller.scheduleChanged(); refreshRecent(); }
     }
 
+    public FolderBrowserPanel openCourseInline(Component owner, PlannerModel.Event event) {
+        if (isBusy() || closed) return null;
+        try { return controller.openInline(courseDirectory(event), this::refreshRecent); }
+        catch (IOException ex) {
+            JOptionPane.showMessageDialog(owner, ex.getMessage(), "과목 자료", JOptionPane.ERROR_MESSAGE);
+            return null;
+        }
+    }
+    public void closeInline() { controller.closeInline(); }
+
     public boolean isBusy() { return controller.isWorking(); }
     public void closePopup() { controller.closePreview(); }
-
-    /** point는 지도 컴포넌트 내부 좌표다. */
-    public void openAt(JComponent anchor, Point point, Building building) {
-        if(isBusy())return;
-        building=beforeOpen.apply(building);
-        if(building==null)return;
-        controller.showPreview(anchor, new Point(point), key(building), this::refreshRecent);
-    }
 
     public void openCourse(JComponent anchor,PlannerModel.Event event) {
         if(isBusy()||closed)return;
@@ -128,12 +127,14 @@ public final class FolderModule implements AutoCloseable {
         } catch(IOException ex) { JOptionPane.showMessageDialog(anchor,ex.getMessage(),"과목 자료",JOptionPane.ERROR_MESSAGE); }
     }
 
-    public void openOccurrence(JComponent anchor,PlannerModel.Occurrence occurrence) {
-        if(occurrence.event().category()==PlannerModel.Category.CLASS)openCourse(anchor,occurrence.event());
-        else {
-            Building building=map.building(occurrence.event().buildingId());
-            if(building!=null)openAt(anchor,new Point(anchor.getWidth()/2,35),building);
-        }
+    public Path courseDirectory(PlannerModel.Event event) throws IOException {
+        if(closed||map.building(event.buildingId())==null)throw new IOException("과목 장소를 찾을 수 없습니다.");
+        return catalog.prepareCourse(new FolderService(buildingsRoot),event);
+    }
+    public void openCourseDirectory(Component owner,PlannerModel.Event event) {
+        if(isBusy()||closed)return;
+        try { FolderService.openDirectory(courseDirectory(event)); }
+        catch(IOException ex){JOptionPane.showMessageDialog(owner,ex.getMessage(),"원본 폴더 열기",JOptionPane.ERROR_MESSAGE);}
     }
 
     public void moveIntoCourse(JComponent owner,PlannerModel.Event event,List<File> files) {
@@ -142,22 +143,6 @@ public final class FolderModule implements AutoCloseable {
             Path target=catalog.prepareCourse(new FolderService(buildingsRoot),event);
             controller.receiveFilesInFolder(SwingUtilities.getWindowAncestor(owner),target,List.copyOf(files),this::refreshRecent);
         } catch(IOException ex) { JOptionPane.showMessageDialog(owner,ex.getMessage(),"자료 이동",JOptionPane.ERROR_MESSAGE); }
-    }
-
-    public boolean hasFolder(Building building) {
-        return Files.isDirectory(buildingsRoot.resolve(key(building)),LinkOption.NOFOLLOW_LINKS);
-    }
-
-    public void createFolder(Component owner,Building building) {
-        if(isBusy())return;
-        try {
-            FolderService service=new FolderService(buildingsRoot);
-            Path path=service.checked(buildingsRoot.resolve(key(building)));
-            Files.createDirectories(path);
-            catalog.prepare(service,key(building));
-        } catch(IOException ex) {
-            JOptionPane.showMessageDialog(owner,ex.getMessage(),"폴더 생성 실패",JOptionPane.ERROR_MESSAGE);
-        }
     }
 
     public void moveInto(JComponent owner, Building building, List<File> files) {
@@ -179,13 +164,26 @@ public final class FolderModule implements AutoCloseable {
         String id = key(building);
         JButton button = new JButton();
         button.setPreferredSize(new Dimension(32, 32));
+        // 버튼 박스 없이 작은 아이콘만 보이고, 건물이나 아이콘에 마우스를 올리면 크게 보인다.
+        button.setContentAreaFilled(false); button.setBorderPainted(false); button.setFocusPainted(false);
+        button.setOpaque(false); button.setMargin(new Insets(0,0,0,0));
+        button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        button.getModel().addChangeListener(e -> showIcon(button));
         button.getAccessibleContext().setAccessibleName(building.name() + " 최근 파일");
-        button.addActionListener(e -> controller.openLatest(SwingUtilities.getWindowAncestor(button), id));
+        button.addActionListener(e -> {
+            if(controller.latest(id)!=null)controller.openLatest(SwingUtilities.getWindowAncestor(button), id);
+
+        });
         Runnable update = () -> {
             Path file = controller.latest(id);
-            button.setVisible(file != null);
-            button.setToolTipText(file == null ? null : file.getFileName().toString());
-            button.setIcon(file == null ? null : new DocumentIcon(FolderService.extension(file).toUpperCase(java.util.Locale.ROOT), false, 24));
+            button.setVisible(file!=null);
+            button.setToolTipText(file!=null?"최근 파일: "+file.getFileName():null);
+            String type=file!=null?FolderService.extension(file).toUpperCase(java.util.Locale.ROOT):"";
+            boolean show=file!=null;
+            button.putClientProperty("icon.small",show?new DocumentIcon(type,file==null,SMALL_ICON):null);
+            button.putClientProperty("icon.large",show?new DocumentIcon(type,file==null,LARGE_ICON):null);
+            showIcon(button);
+            button.getAccessibleContext().setAccessibleName(building.name()+" 최근 파일");
         };
         button.putClientProperty("recent.update",update);
         updates.add(update);
@@ -193,11 +191,43 @@ public final class FolderModule implements AutoCloseable {
         return button;
     }
 
+    private static final int SMALL_ICON = 12, LARGE_ICON = 24;
+
+    /** 아이콘 위에 마우스가 있거나 지도에서 그 건물 위에 마우스가 있으면 큰 아이콘을 쓴다. */
+    private static void showIcon(JButton button) {
+        boolean large=button.getModel().isRollover()||Boolean.TRUE.equals(button.getClientProperty("map.hover"));
+        Object icon=button.getClientProperty(large?"icon.large":"icon.small");
+        Icon next=icon instanceof Icon value?value:null;
+        if(button.getIcon()!=next)button.setIcon(next);
+    }
+
     public void refreshRecent() { List.copyOf(updates).forEach(Runnable::run); }
 
-    /** 빈 지도 패널용: 최근 파일 버튼을 건물 옆에 배치하고 확대/이동 시 위치를 갱신한다. */
+    /**
+     * 작은 아이콘이 건물 밖으로 나가지 않는 위치 중 오른쪽 위에 가장 가까운 곳을 고른다.
+     * 건물이 아이콘보다 작게 그려질 때는 건물 중심을 쓴다.
+     */
+    public static Point iconCenter(java.awt.geom.Path2D shape, java.awt.geom.Point2D fallback) {
+        java.awt.geom.Rectangle2D bounds = shape.getBounds2D();
+        double half = SMALL_ICON / 2.0 + 1;
+        Point best = new Point((int)Math.round(fallback.getX()), (int)Math.round(fallback.getY()));
+        if (bounds.getWidth() < half * 2 || bounds.getHeight() < half * 2) return best;
+        double step = Math.max(1, Math.max(bounds.getWidth(), bounds.getHeight()) / 80), bestScore = Double.NEGATIVE_INFINITY;
+        for (double y = bounds.getMinY() + half; y <= bounds.getMaxY() - half; y += step) {
+            for (double x = bounds.getMaxX() - half; x >= bounds.getMinX() + half; x -= step) {
+                double score = (x - bounds.getMinX()) / bounds.getWidth() - (y - bounds.getMinY()) / bounds.getHeight();
+                if (score <= bestScore) break; // 같은 줄에서 더 왼쪽은 점수가 낮아진다.
+                if (shape.contains(x - half, y - half, half * 2, half * 2)) {
+                    bestScore = score; best = new Point((int)Math.round(x), (int)Math.round(y)); break;
+                }
+            }
+        }
+        return best;
+    }
+
+    /** 빈 지도 패널용: 최근 파일 버튼을 건물 안쪽 오른쪽 위에 배치하고 확대/이동 시 위치를 갱신한다. */
     public void attach(JComponent canvas, Function<Point, Building> hitTest,
-                       Function<Building, java.awt.geom.Point2D> project) {
+                       Function<CampusMap.GeoPoint, java.awt.geom.Point2D> project) {
         if (canvas.getComponentCount() != 0) throw new IllegalArgumentException("최근 파일 오버레이는 자식 컴포넌트가 없는 지도에 연결하세요.");
         attach(canvas, hitTest);
         LayoutManager previousLayout = canvas.getLayout();
@@ -218,15 +248,39 @@ public final class FolderModule implements AutoCloseable {
                 JButton button=recentButton(building);buttons.put(building,button);canvas.add(button);
             }
             buttons.forEach((building,button) -> {
-                java.awt.geom.Point2D p = project.apply(building);
-                int x=(int)p.getX()+18, y=(int)p.getY()-16;
+                if (!button.isVisible()) return;
+                java.awt.geom.Path2D shape = new java.awt.geom.Path2D.Double();
+                for (CampusMap.GeoPoint corner : building.outline()) {
+                    java.awt.geom.Point2D p = project.apply(corner);
+                    if (shape.getCurrentPoint() == null) shape.moveTo(p.getX(), p.getY()); else shape.lineTo(p.getX(), p.getY());
+                }
+                java.awt.geom.Point2D middle = project.apply(building.center());
+                // 지도가 움직이지 않았으면 이전 계산을 다시 쓴다(위치 갱신 타이머가 0.1초마다 돈다).
+                String key = shape.getBounds2D() + "|" + middle;
+                if (!key.equals(button.getClientProperty("icon.key"))) {
+                    button.putClientProperty("icon.center", iconCenter(shape, middle));
+                    button.putClientProperty("icon.key", key);
+                }
+                Point center = (Point) button.getClientProperty("icon.center");
+                int x=center.x-16, y=center.y-16;
                 if(button.getX()!=x || button.getY()!=y || button.getWidth()!=32)
                     button.setBounds(x,y,32,32);
             });
         };
+        Building[] hovered = { null };
+        java.util.function.Consumer<Building> hover = building -> {
+            if (java.util.Objects.equals(building, hovered[0])) return;
+            for (Building old : new Building[] { hovered[0], building }) {
+                JButton button = old == null ? null : buttons.get(old);
+                if (button != null) { button.putClientProperty("map.hover", old.equals(building)); showIcon(button); }
+            }
+            hovered[0] = building;
+        };
         MouseAdapter movement = new MouseAdapter() {
             public void mouseDragged(MouseEvent e) { SwingUtilities.invokeLater(position); }
             public void mouseWheelMoved(MouseWheelEvent e) { SwingUtilities.invokeLater(position); }
+            public void mouseMoved(MouseEvent e) { hover.accept(hitTest.apply(e.getPoint())); }
+            public void mouseExited(MouseEvent e) { hover.accept(null); }
         };
         ComponentAdapter resize = new ComponentAdapter() {
             public void componentResized(ComponentEvent e) { position.run(); }
@@ -234,6 +288,7 @@ public final class FolderModule implements AutoCloseable {
         // 키보드/버튼으로 수행된 지도 zoom도 감지한다. 파일 시스템 조회는 하지 않는다.
         Timer positions = new Timer(100, e -> { if(canvas.isShowing())position.run(); });
         positions.start();
+        canvas.addMouseListener(movement);
         canvas.addMouseMotionListener(movement);
         canvas.addMouseWheelListener(movement);
         canvas.addComponentListener(resize);
@@ -241,6 +296,7 @@ public final class FolderModule implements AutoCloseable {
         position.run();
         detachments.add(() -> {
             positions.stop();
+            canvas.removeMouseListener(movement);
             canvas.removeMouseMotionListener(movement);
             canvas.removeMouseWheelListener(movement);
             canvas.removeComponentListener(resize);
@@ -254,26 +310,6 @@ public final class FolderModule implements AutoCloseable {
     /** 기존 지도 선택/패닝 리스너를 유지한다. hitTest는 확대·이동이 반영된 현재 좌표를 판정해야 한다. */
     public void attach(JComponent canvas, Function<Point, Building> hitTest) {
         if (closed) throw new IllegalStateException("닫힌 자료함입니다.");
-        MouseAdapter mouse = new MouseAdapter() {
-            private Point press;
-            private boolean dragged;
-            public void mousePressed(MouseEvent e) {
-                press = SwingUtilities.isLeftMouseButton(e) ? e.getPoint() : null;
-                dragged = false;
-            }
-            public void mouseDragged(MouseEvent e) {
-                if (press != null && press.distance(e.getPoint()) > 2) dragged = true;
-            }
-            public void mouseReleased(MouseEvent e) {
-                if(e.isConsumed()) { press=null;return; }
-                if (press != null && !dragged && SwingUtilities.isLeftMouseButton(e)) {
-                    Building building = hitTest.apply(e.getPoint());
-                    if (building == null) closePopup();
-                    else if (e.getClickCount() == 2) openAt(canvas, e.getPoint(), building);
-                }
-                press = null;
-            }
-        };
         TransferHandler previous = canvas.getTransferHandler();
         TransferHandler transfer = new TransferHandler() {
             public boolean canImport(TransferSupport s) {
@@ -296,12 +332,8 @@ public final class FolderModule implements AutoCloseable {
                 } catch (Exception e) { return false; }
             }
         };
-        canvas.addMouseListener(mouse);
-        canvas.addMouseMotionListener(mouse);
         canvas.setTransferHandler(transfer);
         detachments.add(() -> {
-            canvas.removeMouseListener(mouse);
-            canvas.removeMouseMotionListener(mouse);
             if (canvas.getTransferHandler() == transfer) canvas.setTransferHandler(previous);
         });
     }

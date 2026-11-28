@@ -15,6 +15,15 @@ public final class FolderService {
         this.root = root.toRealPath();
     }
 
+    /** 검증된 실제 디렉터리를 OS 파일 탐색기로 연다. */
+    public static void openDirectory(Path directory) throws IOException {
+        if(!Files.isDirectory(directory,LinkOption.NOFOLLOW_LINKS)||Files.isSymbolicLink(directory))
+            throw new IOException("폴더를 찾을 수 없습니다.");
+        if(!java.awt.Desktop.isDesktopSupported()||!java.awt.Desktop.getDesktop().isSupported(java.awt.Desktop.Action.OPEN))
+            throw new IOException("이 환경에서는 파일 탐색기를 열 수 없습니다.");
+        java.awt.Desktop.getDesktop().open(directory.toFile());
+    }
+
     public Path getRoot() { return root; }
 
     public Path checked(Path path) throws IOException {

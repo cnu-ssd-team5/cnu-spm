@@ -9,6 +9,8 @@ public final class BuildingFolderController {
     private MiniFolderPopup preview;
     private final campus.folder.storage.CourseCatalog catalog;
     private boolean moving;
+    private Runnable folderChanged=()->{};
+    public void setFolderChanged(Runnable listener){folderChanged=java.util.Objects.requireNonNull(listener);}
     private Path previewBuilding;
     private final java.util.Map<Path,javax.swing.Timer> cleanupTimers=new java.util.HashMap<>();
     private final java.util.List<MapFileSearch> searches=new java.util.ArrayList<>();
@@ -123,6 +125,7 @@ public final class BuildingFolderController {
             if(campus.folder.storage.EmptyFolderCleanup.remove(service,building)) {
                 // 폴더를 다시 열어 Ctrl+Z로 삭제 파일을 복구할 수 있도록 실행 취소 기록은 유지한다.
                 if(attempt>0)cleanupLog(building,attempt,"정리 완료",null);
+                folderChanged.run();
             } else cleanupLog(building,attempt,"보존: 파일·링크 또는 새 항목이 있음",null);
         } catch(java.io.IOException ex) { retryCleanup(building,attempt,ex); }
     }
@@ -156,6 +159,7 @@ public final class BuildingFolderController {
             Files.createDirectories(building);
             preview=new MiniFolderPopup(javax.swing.SwingUtilities.getWindowAncestor(anchor),this,service,building,updated);
             preview.showAt(anchor,point);
+            updated.run();
         }
         catch(Exception e) {
             JOptionPane.showMessageDialog(anchor,e.getMessage());
@@ -177,6 +181,7 @@ public final class BuildingFolderController {
             preview=new MiniFolderPopup(javax.swing.SwingUtilities.getWindowAncestor(anchor),this,service,building,updated);
             preview.startAt(target);
             preview.showBeside(anchor);
+            updated.run();
         } catch(Exception e) {
             JOptionPane.showMessageDialog(anchor,e.getMessage());
         }

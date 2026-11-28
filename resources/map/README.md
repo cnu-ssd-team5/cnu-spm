@@ -1,4 +1,38 @@
-# 전남대학교 OSM 데이터
+# 예제 학교 OSM 데이터
+
+지도 교체창에서 아래 원본 파일을 선택합니다. 앱은 원본을 변경하지 않고 `data/selected-map.osm`으로 복사해 사용합니다.
+
+- 전남대: `chonnam-campus.osm` (첫 실행 기본 지도)
+- 조선대: `chosun-campus.osm`
+- 광주과학기술원(GIST): `gist-campus.osm`
+- 광주교육대학교: `gnue-campus.osm`
+- 광주대학교: `gwangju-campus.osm`
+- 호남대학교: `honam-campus.osm`
+
+## 추가 학교 원본 (2026-11-27 다운로드)
+
+각 학교의 OSM 캠퍼스 경계 전체와 주변 약 60~80m 영역을 포함해 내려받았습니다. 아래 파일은 OpenStreetMap API의 XML 원본 응답입니다.
+
+| 학교 | 파일 | 캠퍼스 경계 | 원본 추출 |
+|---|---|---|---|
+| 광주과학기술원 | `gist-campus.osm` | [way 475431872](https://www.openstreetmap.org/way/475431872) | [OSM API](https://api.openstreetmap.org/api/0.6/map?bbox=126.835678,35.223373,126.849568,35.233559) |
+| 광주교육대학교 | `gnue-campus.osm` | [way 105568793](https://www.openstreetmap.org/way/105568793) | [OSM API](https://api.openstreetmap.org/api/0.6/map?bbox=126.922472,35.162389,126.931070,35.167303) |
+| 광주대학교 | `gwangju-campus.osm` | [way 485774210](https://www.openstreetmap.org/way/485774210) | [OSM API](https://api.openstreetmap.org/api/0.6/map?bbox=126.891612,35.101766,126.897765,35.109749) |
+| 호남대학교 | `honam-campus.osm` | [way 539149487](https://www.openstreetmap.org/way/539149487) | [OSM API](https://api.openstreetmap.org/api/0.6/map?bbox=126.755728,35.148680,126.771612,35.154428) |
+
+저작자 © OpenStreetMap contributors · [Open Database License 1.0](https://opendatacommons.org/licenses/odbl/1-0/) · [저작권 안내](https://www.openstreetmap.org/copyright)
+
+네 파일 모두 앱의 기존 OSM 로더로 올바른 캠퍼스 경계 선택, 건물 좌표 완전성, 보행 그래프 생성과 건물 간 경로 계산을 확인했습니다. 창을 띄우는 검사는 하지 않았습니다.
+
+## 조선대학교
+
+- 출처 [OpenStreetMap API 원본 지도 추출](https://api.openstreetmap.org/api/0.6/map?bbox=126.922166,35.134535,126.937353,35.147812)
+- 요청 범위: 서쪽 경도 126.922166, 남쪽 위도 35.134535, 동쪽 경도 126.937353, 북쪽 위도 35.147812
+- 캠퍼스 경계 [OSM way 468689587](https://www.openstreetmap.org/way/468689587)
+- 저작자 © OpenStreetMap contributors · [Open Database License 1.0](https://opendatacommons.org/licenses/odbl/1-0/)
+- 원본 추출에 연결된 외부 교통 정보가 포함될 수 있으며, 앱은 대학 경계와 선택 영역을 기준으로 필요한 지도를 구성합니다.
+
+## 전남대학교
 
 - 파일 `chonnam-campus.osm`
 - 출처 [OpenStreetMap API 원본 지도 추출](https://api.openstreetmap.org/api/0.6/map?bbox=126.897,35.171,126.915,35.184)
@@ -14,7 +48,7 @@
 
 ## 건물과 지도 표시
 
-`amenity=university`, `name:ko=전남대학교`인 캠퍼스 경계를 기준으로 내부의 건물 폴리곤을 읽습니다. `multipolygon` 건물도 외곽선을 연결해서 읽습니다. 이 스냅샷에는 캠퍼스 건물 211개가 있으며 만들마루 `w1125468849`, G&R허브 `w1125544293`가 포함됩니다. 이름이 없는 창고, 온실 등의 건물은 OSM ID를 붙인 `이름 없는 건물`로 표시합니다. 건물명은 OSM의 한국어 이름을 우선 사용합니다.
+`amenity=university`인 닫힌 캠퍼스 경계 중 면적이 가장 큰 곳을 기준으로 내부의 건물 폴리곤을 읽습니다. `multipolygon` 건물도 외곽선을 연결해서 읽습니다. 전남대 스냅샷에는 캠퍼스 건물 211개가 있으며 만들마루 `w1125468849`, G&R허브 `w1125544293`가 포함됩니다. 이름이 없는 건물도 지도에서 선택할 수 있으며 목록에서는 숨깁니다. 건물명은 OSM의 한국어 이름을 우선 사용하고 사용자 수정 이름은 개인 데이터에 저장합니다.
 
 ## 보행 경로 계산
 

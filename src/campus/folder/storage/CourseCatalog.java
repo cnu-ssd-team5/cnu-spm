@@ -1,8 +1,6 @@
 package campus.folder.storage;
 import campus.map.CampusMap;
 import campus.model.PlannerModel;
-import campus.calendar.Semester;
-import campus.calendar.PlannerTime;
 import java.nio.file.*;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
@@ -64,17 +62,10 @@ public final class CourseCatalog {
     }
     public List<String> names(String key) {
         return model.events().stream().filter(e->e.category()==PlannerModel.Category.CLASS && map.building(e.buildingId())!=null && belongs(e.buildingId(),key))
-                .map(this::courseWithinBuilding).map(Path::toString).distinct().sorted().toList();
-    }
-    public Semester semesterOf(PlannerModel.Event event) {
-        Semester semester=model.semesterOf(event.id());
-        return semester!=null?semester:Semester.forDate(event.date()!=null?event.date():PlannerTime.today());
-    }
-    private Path courseWithinBuilding(PlannerModel.Event event) {
-        return Path.of(semesterOf(event).folderName(),folderName(event.title()));
+                .map(e -> folderName(e.title())).distinct().sorted().toList();
     }
     public Path relativeCoursePath(PlannerModel.Event event) {
-        return Path.of(storageKey(event.buildingId())).resolve(courseWithinBuilding(event));
+        return Path.of(storageKey(event.buildingId()), folderName(event.title()));
     }
     public Path prepareCourse(FolderService service,PlannerModel.Event event)throws IOException {
         Path folder=service.checked(service.getRoot().resolve(relativeCoursePath(event)));
