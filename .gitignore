@@ -1,0 +1,31 @@
+# Generated builds, QA output and packaged applications
+/build/
+/dist/
+*.class
+
+# Personal schedule state and its temporary files
+/data/planner-state.xml
+/data/planner-state.xml.lock
+/data/.campus-planner-*.tmp
+/data/selected-map.osm
+/data/selected-map-*.tmp
+/data/maps/
+
+# Course materials and local folder-service state
+/data/buildings/
+/data/.folder.lock
+/data/.folder-course-links.properties
+/data/.folder-course-backups/
+/data/.folder-recent/
+/data/.folder-trash/
+/data/folder-cleanup.log
+/data/course-links-*.tmp
+
+# Local reminder deduplication state
+*.reminders.properties
+deadline-alert-*.tmp
+
+# Local runtime data and generated study/presentation files
+/data/
+/tmp/
+/output/
