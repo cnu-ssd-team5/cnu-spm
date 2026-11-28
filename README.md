@@ -41,11 +41,12 @@ Windows에서 `run.cmd`를 더블클릭합니다. PowerShell에서는 다음 명
 src/campus/
  ├─ App.java       시작점 (지도·일정 불러오기, 메인 창 열기)
  ├─ model/         PlannerModel (일정·핀·즐겨찾기·할일), PlannerStore (XML 저장)
- ├─ map/           CampusMap (OSM 장소), MapSelection (지도 선택·학교별 저장 위치), WalkGraph (보행 그래프), RouteService (다익스트라)
+ ├─ map/           CampusMap (OSM 장소), OsmReader·OsmTags·MapGeometry (OSM 읽기·태그 해석·도형 계산),
+                   MapSelection (지도 선택·학교별 저장 위치), WalkGraph (보행 그래프), RouteService (다익스트라),
+                   PlaceService (사용자 핀·장소 이름·지도 연결)
  ├─ service/       DayPlanService (이동 구간), DeadlineReminderService (마감 알림)
  ├─ calendar/      CalendarPanel, PlannerTime, 공휴일·할일
  ├─ weather/       WeatherForecast (Open-Meteo 일별 예보)
- ├─ places/        PlaceService (사용자 핀·장소 이름·지도 연결)
  ├─ sharing/       ScheduleSharing (일정 XML 내보내기·불러오기)
  ├─ profiles/      ScheduleProfiles, ScheduleListDialog (시간표 목록·선택·저장)
  ├─ timetable/     TimetablePanel, TimetableService, WeekGrid, TimePicker
@@ -54,7 +55,7 @@ src/campus/
  └─ ui/            MainFrame, WeekBar, PlacesPanel, MapPanel, SchedulePanel,
                    MapWorkspace, RouteDialog, Theme, UiIcons,
                    FolderBrowserPanel, MiniFolderPopup, MapFileSearch (자료함·파일 검색 UI)
-resources/map/     전남대 OSM 지도 데이터와 출처
+resources/map/     전남대·조선대·GIST·광주교대·광주대·호남대 OSM 지도 데이터와 출처
 ```
 
 일회성·반복 일정의 등록과 편집은 `TimetablePanel.EventEditor` 하나로 통합합니다. 입력창 구성·요일 선택·검증·저장을 메서드로 나누고, 일정 변경 규칙은 `TimetableService`가 담당합니다.
@@ -110,13 +111,13 @@ resources/map/     전남대 OSM 지도 데이터와 출처
 
 ## 저장 파일
 
-개인 일정은 프로젝트의 `data/planner-state.xml`에 UTF-8 XML로 저장합니다. 저장할 때 같은 폴더에 임시 파일을 쓴 뒤 원래 파일을 교체합니다. 손상되었거나 지원하지 않는 버전의 파일을 읽으면 오류를 알립니다. 같은 저장 파일로 앱을 동시에 열면 덮어쓰기를 막기 위해 두 번째 실행에 안내를 표시합니다. 개인 일정 파일과 실행 잠금 파일은 `.gitignore`에서 제외합니다. 추가 시간표는 기존 데이터와 호환되도록 `data/friends/`에 시간표별 XML로 저장하며 이 폴더도 Git에서 제외합니다.
+개인 일정은 UTF-8 XML로 저장합니다. 전남대 기존 일정은 `data/planner-state.xml`, 다른 학교 지도를 선택한 경우는 `data/maps/캠퍼스OSMID/planner-state.xml`에 학교별로 저장합니다. 저장할 때 같은 폴더에 임시 파일을 쓴 뒤 원래 파일을 교체합니다. 손상되었거나 지원하지 않는 버전의 파일을 읽으면 오류를 알립니다. 같은 저장 파일로 앱을 동시에 열면 덮어쓰기를 막기 위해 두 번째 실행에 안내를 표시합니다. `data` 폴더 전체(개인 일정, 자료 파일, 실행 잠금 파일)는 `.gitignore`로 Git에서 제외합니다. **시간표 목록**의 추가 시간표는 기존 데이터와 호환되도록 일정 파일 옆 `friends` 폴더에 시간표별 XML로 저장합니다.
 
-자료함 정리 실패와 재시도 결과는 `data/folder-cleanup.log`에 기록합니다. 읽기 전용 속성 및 OneDrive 환경을 고려한 처리와 검증 내용은 [빈 자료함 정리 분석](docs/folder-cleanup-analysis.md)을 참고하세요.
+자료함 정리 실패와 재시도 결과는 `data/folder-cleanup.log`에 기록합니다.
 
 ## 시간표 회귀 테스트
 
-PowerShell에서 `tests/run-timetable-tests.ps1`을 실행합니다. 원본 개인 데이터를 사용하지 않고 `build/timetable-tests`에서 날짜별 표시, 반복 전환, 휴강 예외, 저장·복원 및 드래그 이벤트 38개를 검사합니다.
+PowerShell에서 `tests/run-timetable-tests.ps1`을 실행합니다. 원본 개인 데이터를 사용하지 않고 `build/timetable-tests`에서 날짜별 표시, 반복 전환, 휴강 예외, 저장·복원 및 드래그 이벤트 46개를 검사합니다.
 
 ## Windows 배포본
 
@@ -124,7 +125,27 @@ PowerShell에서 `tests/run-timetable-tests.ps1`을 실행합니다. 원본 개�
 
 ## 통합 화이트박스 QA
 
-`./tests/run-integration-qa.ps1`은 시간표 편집·저장, 날짜 이동, 지도, 자료함과 주요 화면 동작을 검사합니다. 테스트는 개인 데이터와 분리된 임시 데이터를 사용합니다. 등록창 검사는 창을 자동으로 열고 닫으며, 로그는 `build/whitebox-qa`에 남깁니다. 초기 통합 과정은 [통합 및 QA 기록](docs/integration-qa.md)에 정리합니다.
+`./tests/run-integration-qa.ps1`은 시간표 편집·저장, 날짜 이동, 지도, 자료함과 주요 화면 동작을 검사합니다. 테스트는 개인 데이터와 분리된 임시 데이터를 사용합니다. 등록창 검사는 창을 자동으로 열고 닫으며, 로그는 `build/whitebox-qa`에 남깁니다. 13개 검사 묶음, 229개 항목을 검사합니다.
+
+| 검사 묶음 | 항목 |
+|---|---|
+| 시간표 드래그·반복 (`CalendarDragTest`) | 46 |
+| 지도·자료함 통합 (`CalendarIntegrationTest`) | 20 |
+| 지도 화면 이동 (`MapViewportTest`) | 10 |
+| 일정 입력창 (`TimetableEditorTest`) | 3 |
+| 공통 일정 등록창 (`ScheduleEntryWhiteBoxTest`) | 16 |
+| 달력·마감 (`CalendarDeadlineTest`) | 29 |
+| 작업 공간·자료함 (`WorkspaceMaterialsTest`) | 19 |
+| 화면 배치 (`WorkspaceLayoutTest`) | 20 |
+| 장소 연결 (`PlaceLinkingTest`) | 12 |
+| 시계·타이머·알림 (`TimeReminderTest`) | 22 |
+| 주간 날짜 (`WeekBarRegressionTest`) | 23 |
+| 이동 시간 (`RouteTimingRegressionTest`) | 4 |
+| 실행 경로·지도 불러오기 (`AppPathsTest`) | 5 |
+
+## 지도 회귀 테스트
+
+`./tests/run-map-tests.ps1`은 제공하는 학교 지도 5개를 읽어 건물·보행 그래프·경로 계산 결과 183개 항목을 검사합니다.
 
 ## 작업 공간과 원본 자료
 
