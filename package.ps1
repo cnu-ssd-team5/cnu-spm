@@ -104,6 +104,8 @@ try {
     }
 
     Copy-Item -LiteralPath (Join-Path $projectRoot 'resources/map/README.md') -Destination (Join-Path $application 'OSM-SOURCES.md')
+    [void] [IO.Directory]::CreateDirectory((Join-Path $application 'resources'))
+    Copy-Item -LiteralPath (Join-Path $projectRoot 'resources/map') -Destination (Join-Path $application 'resources') -Recurse
     $instructions = @'
 전남대학교 일정 — Windows 실행본
 
@@ -117,7 +119,7 @@ CNU-Schedule 폴더 전체를 함께 보관하거나 전달해 주세요.
 새 실행본에는 개인 일정이 들어 있지 않습니다.
 기존 앱에서 "공유하기"로 저장한 XML 파일을 새 앱의 "가져오기"로 불러올 수 있습니다.
 개인 일정과 자료는 실행 파일 옆 data 폴더에 저장됩니다.
-과목 자료: data/buildings/건물명/학기/강의명
+과목 자료: data/buildings/건물명/강의명
 자료 백업 시 data 폴더 전체를 복사하세요. 일정 공유 XML에는 실제 자료 파일이 들어 있지 않습니다.
 쓰기 가능한 폴더(문서, 바탕화면 등)에 압축을 풀어 사용해 주세요.
 

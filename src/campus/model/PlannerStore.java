@@ -1,6 +1,4 @@
 package campus.model;
-import campus.calendar.Semester;
-import campus.calendar.PlannerTime;
 
 
 import java.io.IOException;
@@ -40,9 +38,21 @@ import org.xml.sax.helpers.DefaultHandler;
 public final class PlannerStore {
     private PlannerStore() { }
 
+    public record NamedSchedule(String name, PlannerModel model) { }
+
     public static PlannerModel load(Path path) throws IOException {
+        return read(path).model();
+    }
+
+    public static NamedSchedule loadProfileSchedule(Path path) throws IOException {
+        NamedSchedule schedule = read(path);
+        if (schedule.name().isBlank()) throw new IOException("시간표 이름이 없는 일정 파일입니다.");
+        return schedule;
+    }
+
+    private static NamedSchedule read(Path path) throws IOException {
         if (Files.notExists(path)) {
-            return new PlannerModel();
+            return new NamedSchedule("", new PlannerModel());
         }
         try (InputStream input = Files.newInputStream(path)) {
             Document document = newBuilder().parse(input);
@@ -73,12 +83,10 @@ public final class PlannerStore {
                                 : PlannerModel.Category.valueOf(category),
                         weekday.isEmpty() ? null : DayOfWeek.valueOf(weekday),
                         date.isEmpty() ? null : LocalDate.parse(date),
-                        childText(element, "note"));
-                String semester = element.getAttribute("semester");
-                if (!semester.isEmpty()) model.putEvent(event, Semester.parse(semester));
-                else if (!"3".equals(version)) {
-                    model.putEvent(event, Semester.forDate(event.recurring() ? PlannerTime.today() : event.date()));
-                } else model.putEvent(event);
+                        childText(element, "note"),
+                        element.getAttribute("customCategory"),
+                        element.getAttribute("customPlace"));
+                model.putEvent(event);
             }
             for (Element element : entries(root, "favorites", "building")) {
                 String id = requiredAttribute(element, "id");
@@ -102,6 +110,12 @@ public final class PlannerStore {
                 if (!namedBuildingIds.add(id)) throw new IOException("중복된 건물 이름 ID가 있습니다: " + id);
                 model.renameBuilding(id, requiredAttribute(element, "name"));
             }
+            Set<String> notedBuildingIds = new HashSet<>();
+            for (Element element : entries(root, "building-notes", "building")) {
+                String id = requiredAttribute(element, "id");
+                if (!notedBuildingIds.add(id)) throw new IOException("중복된 건물 메모 ID가 있습니다: " + id);
+                model.setBuildingNote(id, element.getTextContent());
+            }
             Set<String> pinIds = new HashSet<>();
             for (Element element : entries(root, "pins", "pin")) {
                 String id = requiredAttribute(element, "id");
@@ -119,17 +133,38 @@ public final class PlannerStore {
                     throw new IOException("마감 일정 완료 상태가 올바르지 않습니다: " + id);
                 }
                 String completedOn = element.getAttribute("completedOn");
+                String priority = element.getAttribute("priority");
+                LocalDate date = LocalDate.parse(requiredAttribute(element, "date"));
+                String plannerDate = element.getAttribute("plannerDate");
+                String deadlineLinked = element.getAttribute("deadlineLinked");
+                if (!deadlineLinked.isEmpty() && !"true".equals(deadlineLinked) && !"false".equals(deadlineLinked)) {
+                    throw new IOException("마감기한 연동 상태가 올바르지 않습니다: " + id);
+                }
                 model.putDeadline(new PlannerModel.Deadline(id, requiredAttribute(element, "title"),
-                        LocalDate.parse(requiredAttribute(element, "date")), childText(element, "note"),
-                        Boolean.parseBoolean(completed), completedOn.isEmpty() ? null : LocalDate.parse(completedOn)));
+                        date, childText(element, "note"),
+                        Boolean.parseBoolean(completed), completedOn.isEmpty() ? null : LocalDate.parse(completedOn),
+                        priority.isEmpty() ? PlannerModel.TaskPriority.NORMAL : PlannerModel.TaskPriority.valueOf(priority),
+                        plannerDate.isEmpty() ? date : LocalDate.parse(plannerDate), !"false".equals(deadlineLinked)));
             }
-            return model;
+            return new NamedSchedule(root.hasAttribute("name") ? root.getAttribute("name") : root.getAttribute("friend"), model);
         } catch (ParserConfigurationException | SAXException | RuntimeException exception) {
             throw new IOException("개인 일정 파일을 읽을 수 없습니다. 기존 파일을 확인해 주세요.", exception);
         }
     }
 
     public static void save(Path path, PlannerModel model) throws IOException {
+        save(path, model, true, "");
+    }
+
+    public static void saveSharedSchedule(Path path, PlannerModel model) throws IOException {
+        save(path, model, false, "");
+    }
+
+    public static void saveProfileSchedule(Path path, NamedSchedule schedule) throws IOException {
+        save(path, schedule.model(), true, schedule.name());
+    }
+
+    private static void save(Path path, PlannerModel model, boolean includeBuildingNotes, String name) throws IOException {
         Document document;
         try {
             document = newBuilder().newDocument();
@@ -138,6 +173,7 @@ public final class PlannerStore {
         }
         Element root = document.createElement("campus-planner");
         root.setAttribute("version", "3");
+        if (!name.isBlank()) root.setAttribute("name", name);
         document.appendChild(root);
         // Capture schedules and their exceptions from the same consistent model state.
         synchronized (model) {
@@ -150,8 +186,8 @@ public final class PlannerStore {
                 element.setAttribute("start", event.start().toString());
                 element.setAttribute("end", event.end().toString());
                 element.setAttribute("category", event.category().name());
-                Semester semester = model.semesterOf(event.id());
-                if (semester != null) element.setAttribute("semester", semester.id());
+                if (!event.customCategory().isEmpty()) element.setAttribute("customCategory", event.customCategory());
+                if (!event.customPlace().isEmpty()) element.setAttribute("customPlace", event.customPlace());
                 if (event.recurring()) {
                     element.setAttribute("weekday", event.weekday().name());
                 } else {
@@ -185,6 +221,15 @@ public final class PlannerStore {
                         element.setAttribute("id", entry.getKey());
                         element.setAttribute("name", entry.getValue());
                     });
+            if (includeBuildingNotes && !model.buildingNotes().isEmpty()) {
+                Element buildingNotes = append(document, root, "building-notes");
+                model.buildingNotes().entrySet().stream().sorted(java.util.Map.Entry.comparingByKey())
+                        .forEach(entry -> {
+                            Element element = append(document, buildingNotes, "building");
+                            element.setAttribute("id", entry.getKey());
+                            element.setTextContent(entry.getValue());
+                        });
+            }
             Element pins = append(document, root, "pins");
             for (PlannerModel.Pin pin : model.pins()) {
                 Element element = append(document, pins, "pin");
@@ -194,12 +239,19 @@ public final class PlannerStore {
                 element.setAttribute("lon", Double.toString(pin.lon()));
             }
             Element deadlines = append(document, root, "deadlines");
-            for (PlannerModel.Deadline deadline : model.deadlines()) {
+            for (PlannerModel.Deadline deadline : model.allTasks()) {
                 Element element = append(document, deadlines, "deadline");
                 element.setAttribute("id", deadline.id());
                 element.setAttribute("title", deadline.title());
                 element.setAttribute("date", deadline.date().toString());
+                if (!deadline.date().equals(deadline.plannerDate())) {
+                    element.setAttribute("plannerDate", deadline.plannerDate().toString());
+                }
+                if (!deadline.deadlineLinked()) element.setAttribute("deadlineLinked", "false");
                 element.setAttribute("completed", Boolean.toString(deadline.completed()));
+                if (deadline.priority() != PlannerModel.TaskPriority.NORMAL) {
+                    element.setAttribute("priority", deadline.priority().name());
+                }
                 if (deadline.completedOn() != null) {
                     element.setAttribute("completedOn", deadline.completedOn().toString());
                 }

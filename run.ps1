@@ -75,7 +75,7 @@ try {
     if ($sources.Count -eq 0) {
         throw 'src 폴더에서 Java 소스 파일을 찾을 수 없습니다.'
     }
-    Write-Host '전남대 캠퍼스 플래너를 준비하고 있습니다...'
+    Write-Host 'Dispatcher를 준비하고 있습니다'
     & $javac '--release' '17' '-encoding' 'UTF-8' '-d' $classDir @sources
     if ($LASTEXITCODE -ne 0) {
         throw 'Java 컴파일에 실패했습니다. 위 오류를 확인해 주세요.'

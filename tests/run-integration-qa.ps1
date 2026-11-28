@@ -12,8 +12,8 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 Get-ChildItem -LiteralPath (Join-Path $projectRoot 'resources') | Copy-Item -Destination $outputDir -Recurse -Force
 $map = Join-Path $projectRoot 'resources/map/chonnam-campus.osm'
 $failures = 0
-foreach ($suite in @('campus.timetable.CalendarDragTest','campus.ui.CalendarIntegrationTest','campus.ui.EventDialogWhiteBoxTest','campus.AppPathsTest')) {
-    $headless = if ($suite -eq 'campus.ui.EventDialogWhiteBoxTest') { 'false' } else { 'true' }
+foreach ($suite in @('campus.timetable.CalendarDragTest','campus.ui.CalendarIntegrationTest','campus.ui.MapViewportTest','campus.timetable.TimetableEditorTest','campus.ui.ScheduleEntryWhiteBoxTest','campus.ui.CalendarDeadlineTest','campus.ui.WorkspaceMaterialsTest','campus.ui.WorkspaceLayoutTest','campus.ui.PlaceLinkingTest','campus.ui.TimeReminderTest','campus.ui.WeekBarRegressionTest','campus.ui.RouteTimingRegressionTest','campus.AppPathsTest')) {
+    $headless = if ($suite -in @('campus.timetable.TimetableEditorTest','campus.ui.ScheduleEntryWhiteBoxTest','campus.ui.WorkspaceMaterialsTest','campus.ui.WorkspaceLayoutTest','campus.ui.PlaceLinkingTest')) { 'false' } else { 'true' }
     & $runtime ('-Djava.awt.headless=' + $headless) -cp $outputDir $suite $map (Join-Path $outputDir 'test-state.xml') 2>&1 | Tee-Object -FilePath (Join-Path $outputDir ($suite + '.log'))
     if ($LASTEXITCODE -ne 0) { $failures++ }
 }

@@ -79,7 +79,6 @@ public final class KoreaHolidays {
 
     private KoreaHolidays() { }
 
-    static boolean supports(int year) { return year >= 2025 && year <= 2027; }
     static String name(LocalDate date) { return HOLIDAYS.getOrDefault(date, ""); }
 
     private static Map<LocalDate, String> dates() {

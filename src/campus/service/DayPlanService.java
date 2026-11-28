@@ -16,7 +16,8 @@ public final class DayPlanService {
             return (int) Math.ceil(route.meters() / (RouteService.WALKING_METERS_PER_SECOND * 60));
         }
         public long gapMinutes() {
-            return Duration.between(from.event().end(), to.event().start()).toMinutes();
+            // Keep a sub-minute overlap negative instead of truncating it to zero.
+            return Math.floorDiv(Duration.between(from.event().end(), to.event().start()).getSeconds(),60);
         }
     }
 

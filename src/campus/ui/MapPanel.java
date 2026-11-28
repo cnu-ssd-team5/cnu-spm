@@ -15,12 +15,14 @@ import campus.model.PlannerModel.Occurrence;
 import campus.service.DayPlanService.Leg;
 
 final class MapPanel extends JPanel {
+    private static final double MIN_ZOOM = 1;
+    private static final double MAX_ZOOM = 8;
+    private static final int HORIZONTAL_PADDING = 35;
+    private static final int VERTICAL_PADDING = 42;
     private final CampusMap data;
     private java.util.function.Function<Building,JPopupMenu> routeMenu;
     void setRouteMenu(java.util.function.Function<Building,JPopupMenu> menu){routeMenu=menu;}
     private Consumer<GeoPoint> pinCreator;
-    private Consumer<Occurrence> occurrenceOpener;
-    void setOccurrenceOpener(Consumer<Occurrence> action) { occurrenceOpener=action; }
     void setPinCreator(Consumer<GeoPoint> action) { pinCreator=action; }
     private GeoPoint geo(Point point) {
         return new GeoPoint(centerLat-(point.y-getHeight()/2.0-panY)/scale(),
@@ -37,12 +39,14 @@ final class MapPanel extends JPanel {
     private Building searchFrom;
     private Building searchTo;
     private Route searchRoute;
+    private boolean scheduleRoutesVisible = true;
     private String selectedId;
     private double zoom = 1;
     private double panX;
     private double panY;
     private Point dragOrigin;
     private boolean dragging;
+    private double dragDistance;
 
     MapPanel(CampusMap data, PlannerModel model, Consumer<Building> selection) {
         this.data = data;
@@ -59,14 +63,17 @@ final class MapPanel extends JPanel {
                 showMenu(e);
                 dragOrigin = SwingUtilities.isLeftMouseButton(e)?e.getPoint():null;
                 dragging = false;
+                dragDistance = 0;
             }
             @Override public void mouseDragged(MouseEvent e) {
                 if (dragOrigin == null) return;
                 double dx = e.getX() - dragOrigin.x;
                 double dy = e.getY() - dragOrigin.y;
-                if (Math.abs(dx) + Math.abs(dy) > 2) dragging = true;
+                dragDistance += Math.abs(dx) + Math.abs(dy);
+                if (dragDistance > 3) dragging = true;
                 panX += dx;
                 panY += dy;
+                constrainViewport();
                 dragOrigin = e.getPoint();
                 repaint();
             }
@@ -74,12 +81,8 @@ final class MapPanel extends JPanel {
                 showMenu(e);
                 if (SwingUtilities.isLeftMouseButton(e) && !dragging) {
                     List<Occurrence> scheduled=scheduledAt(e.getPoint());
-                    if(occurrenceOpener!=null&&!scheduled.isEmpty()) {
-                        e.consume();dragOrigin=null;
-                        if(e.getClickCount()==1)openScheduled(scheduled,e.getPoint());
-                        return;
-                    }
-                    Building hit = hit(e.getPoint());
+                    Building hit = scheduled.isEmpty() ? hit(e.getPoint())
+                            : data.building(scheduled.get(0).event().buildingId());
                     if (hit != null) selection.accept(hit);
                 }
                 dragOrigin = null;
@@ -91,6 +94,25 @@ final class MapPanel extends JPanel {
         addMouseListener(mouse);
         addMouseMotionListener(mouse);
         addMouseWheelListener(mouse);
+    }
+
+    @Override public void setBounds(int x, int y, int width, int height) {
+        boolean resized = width != getWidth() || height != getHeight();
+        super.setBounds(x, y, width, height);
+        if (resized && data != null) constrainViewport();
+    }
+
+    /** Keep a fitted axis centred; larger map axes may pan only as far as their edges. */
+    private void constrainViewport() {
+        if (getWidth() <= 0 || getHeight() <= 0) { panX = panY = 0; return; }
+        double mapWidth = (data.maxLon() - data.minLon()) * longitudeScale * scale();
+        double mapHeight = (data.maxLat() - data.minLat()) * scale();
+        double paddingX = Math.min(HORIZONTAL_PADDING, getWidth() / 4.0);
+        double paddingY = Math.min(VERTICAL_PADDING, getHeight() / 4.0);
+        double horizontal = Math.max(0, (mapWidth - (getWidth() - 2 * paddingX)) / 2);
+        double vertical = Math.max(0, (mapHeight - (getHeight() - 2 * paddingY)) / 2);
+        panX = Math.max(-horizontal, Math.min(horizontal, panX));
+        panY = Math.max(-vertical, Math.min(vertical, panY));
     }
 
     private void showMenu(MouseEvent e) {
@@ -121,17 +143,6 @@ final class MapPanel extends JPanel {
         return List.copyOf(hit);
     }
 
-    private void openScheduled(List<Occurrence> scheduled,Point point) {
-        if(scheduled.size()==1) { occurrenceOpener.accept(scheduled.get(0));return; }
-        JPopupMenu menu=new JPopupMenu();
-        for(Occurrence item:scheduled) {
-            JMenuItem choice=new JMenuItem((active.indexOf(item)+1)+". "+item.event().title()+" · "+
-                    campus.timetable.TimePicker.display(item.event().start()));
-            choice.addActionListener(e->occurrenceOpener.accept(item));menu.add(choice);
-        }
-        menu.show(this,point.x,point.y);
-    }
-
     void setOccurrences(List<Occurrence> occurrences, List<Leg> legs) {
         active = occurrences.stream().filter(o -> !o.canceled()).toList();
         this.legs = legs;
@@ -141,7 +152,7 @@ final class MapPanel extends JPanel {
     List<Leg> legs() { return legs; }
     void connectFolders(campus.folder.FolderModule folders) {
         this.folders=folders;
-        folders.attach(this, this::hit, building -> point(building.center()));
+        folders.attach(this, this::hit, this::point);
     }
 
 
@@ -163,6 +174,16 @@ final class MapPanel extends JPanel {
         return searchRoute != null;
     }
 
+    /** 수업 사이 도보 경로 선만 숨긴다. 일정 번호와 최단거리 찾기 결과는 그대로 표시한다. */
+    void setScheduleRoutesVisible(boolean visible) {
+        scheduleRoutesVisible = visible;
+        repaint();
+    }
+
+    boolean scheduleRoutesVisible() {
+        return scheduleRoutesVisible;
+    }
+
     void select(String id) {
         selectedId = id;
         Building building=data.building(id);
@@ -172,6 +193,7 @@ final class MapPanel extends JPanel {
                 panX+=getWidth()/2.0-p.getX();panY+=getHeight()/2.0-p.getY();
             }
         }
+        constrainViewport();
         repaint();
     }
 
@@ -179,12 +201,18 @@ final class MapPanel extends JPanel {
         zoomAt(factor, new Point(getWidth() / 2, getHeight() / 2));
     }
 
+    void resetView() {
+        zoom=1;panX=0;panY=0;repaint();
+    }
+
     private void zoomAt(double factor, Point anchor) {
-        double next = Math.max(0.25, Math.min(zoom * factor, 8));
+        if (!Double.isFinite(factor) || factor <= 0) return;
+        double next = Math.max(MIN_ZOOM, Math.min(zoom * factor, MAX_ZOOM));
         double ratio = next / zoom;
         panX = anchor.x - getWidth()/2.0 - (anchor.x - getWidth()/2.0 - panX) * ratio;
         panY = anchor.y - getHeight()/2.0 - (anchor.y - getHeight()/2.0 - panY) * ratio;
         zoom = next;
+        constrainViewport();
         repaint();
     }
 
@@ -234,7 +262,7 @@ final class MapPanel extends JPanel {
 
     @Override public String getToolTipText(MouseEvent event) {
         List<Occurrence> scheduled=scheduledAt(event.getPoint());
-        if(!scheduled.isEmpty())return "자료함 열기 · "+scheduled.stream().map(o->o.event().title()).collect(java.util.stream.Collectors.joining(" / "));
+        if(!scheduled.isEmpty())return scheduled.stream().map(o->o.event().title()).collect(java.util.stream.Collectors.joining(" / "));
         Building building = hit(event.getPoint());
         return building==null?null:folders==null?building.name():folders.folderTooltip(building);
     }
@@ -246,10 +274,10 @@ final class MapPanel extends JPanel {
         g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
         for (MapWay way : data.ways()) {
             Color fill = switch (way.kind()) {
-                case "boundary" -> new Color(234, 241, 235);
-                case "water" -> new Color(179, 217, 233);
-                case "green" -> new Color(215, 232, 207);
-                case "pitch" -> new Color(199, 220, 188);
+                case "boundary" -> new Color(235, 242, 227);
+                case "water" -> new Color(181, 222, 244);
+                case "green" -> new Color(215, 233, 198);
+                case "pitch" -> new Color(201, 227, 185);
                 default -> null;
             };
             if (fill != null) {
@@ -286,15 +314,15 @@ final class MapPanel extends JPanel {
                 g.setColor(Color.WHITE);g.draw(new Ellipse2D.Double(xy.getX()-6,xy.getY()-6,12,12));continue;
             }
             Path2D shape = path(building.outline(), true);
-            g.setColor(selected ? new Color(134, 174, 252) : scheduled ? new Color(174, 199, 250) : new Color(218, 225, 231));
+            g.setColor(selected ? new Color(145, 184, 255) : scheduled ? new Color(191, 211, 252) : new Color(224, 228, 238));
             g.fill(shape);
-            g.setColor(selected || scheduled ? Theme.BLUE : new Color(176, 188, 201));
+            g.setColor(selected || scheduled ? Theme.BLUE : new Color(204, 212, 225));
             g.setStroke(new BasicStroke(selected ? 2 : 0.8f));
             g.draw(shape);
         }
         if (isSearchRouteActive()) {
             drawRoute(g, searchRoute);
-        } else {
+        } else if (scheduleRoutesVisible) {
             for (Leg leg : legs) drawRoute(g, leg.route());
         }
         List<Rectangle2D> occupied = new ArrayList<>();
@@ -313,10 +341,16 @@ final class MapPanel extends JPanel {
             } else if (occupied.stream().anyMatch(r -> r.intersects(box))) continue;
             if (!box.intersects(0, 0, getWidth(), getHeight())) continue;
             occupied.add(box);
-            g.setColor(new Color(255, 255, 255, 230));
-            g.fillRoundRect((int)box.getX(), (int)box.getY(), (int)box.getWidth(), (int)box.getHeight(), 6, 6);
+            // 배경 박스 대신 글자에 얇은 흰 테두리를 둘러 지도 위에서도 읽히게 한다.
+            Shape outline = g.getFont().createGlyphVector(g.getFontRenderContext(), text)
+                    .getOutline((float)box.getX()+4, (float)box.getY()+14);
+            Stroke stroke = g.getStroke();
+            g.setStroke(new BasicStroke(3f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+            g.setColor(new Color(255, 255, 255, 220));
+            g.draw(outline);
+            g.setStroke(stroke);
             g.setColor(important ? Theme.BLUE : Theme.INK);
-            g.drawString(text, (float)box.getX()+4, (float)box.getY()+14);
+            g.fill(outline);
             if (model.isFavorite(building.id()) && !onRoute.contains(building.id())) {
                 g.setColor(new Color(211, 148, 31));
                 g.fill(new Ellipse2D.Double(xy.getX()-4, xy.getY()-4, 8, 8));

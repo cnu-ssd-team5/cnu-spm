@@ -4,7 +4,6 @@ import java.awt.*;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Set;
 import javax.swing.*;
 import javax.swing.event.DocumentEvent;
@@ -14,6 +13,7 @@ import campus.map.CampusMap.Building;
 import campus.map.RouteService;
 import campus.map.RouteService.Route;
 import campus.model.PlannerModel;
+import campus.places.PlaceService;
 
 final class RouteDialog extends JDialog {
     record Result(Building from, Building to, Route route) { }
@@ -39,10 +39,10 @@ final class RouteDialog extends JDialog {
         to.select(destination);
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
 
-        JPanel content = new JPanel(new BorderLayout(0, 18));
+        JPanel content = new JPanel(new BorderLayout(0, 16));
         content.setBackground(Color.WHITE);
-        content.setBorder(BorderFactory.createEmptyBorder(24, 26, 22, 26));
-        JPanel heading = Theme.transparent(new GridLayout(2, 1, 0, 6));
+        content.setBorder(BorderFactory.createEmptyBorder(24, 24, 24, 24));
+        JPanel heading = Theme.transparent(new GridLayout(2, 1, 0, 8));
         heading.add(Theme.heading("건물 사이의 길을 찾아보세요", 20));
         heading.add(Theme.label("출발지와 도착지를 선택하면 거리와 도보 경로를 보여줍니다.", 12, Theme.MUTED));
         content.add(heading, BorderLayout.NORTH);
@@ -58,7 +58,7 @@ final class RouteDialog extends JDialog {
         c.gridy++;
         fields.add(from, c);
         c.gridy++;
-        c.insets = new Insets(4, 0, 14, 0);
+        c.insets = new Insets(4, 0, 16, 0);
         fields.add(Theme.button("출발 / 도착 바꾸기", false, this::swap), c);
         c.gridy++;
         c.insets = new Insets(0, 0, 8, 0);
@@ -108,16 +108,15 @@ final class RouteDialog extends JDialog {
         private final List<Building> buildings;
 
         PlacePicker(CampusMap data, PlannerModel model) {
-            super(new BorderLayout(0, 6));
+            super(new BorderLayout(0, 8));
             setOpaque(false);
             Theme.field(query);
             query.setToolTipText("건물 이름을 입력하고 아래 목록에서 선택하세요.");
             choices.setFont(Theme.font(13, Font.PLAIN));
             choices.setBackground(Color.WHITE);
             choices.setMaximumRowCount(10);
-            buildings = data.buildings().stream().sorted(Comparator
+            buildings = data.buildings().stream().filter(PlaceService::hasName).sorted(Comparator
                     .comparing((Building building) -> !model.isFavorite(building.id()))
-                    .thenComparing(building -> building.name().startsWith("이름 없는"))
                     .thenComparing(Building::name)).toList();
             Set<String> duplicateNames = new HashSet<>();
             Set<String> seenNames = new HashSet<>();
@@ -151,18 +150,21 @@ final class RouteDialog extends JDialog {
 
         void select(Building building) {
             query.setText("");
+            // 지도에서 직접 고른 이름없는 건물도 기존 경로의 출발·도착지로는 보존한다.
+            if (building != null && !buildings.contains(building)) choices.addItem(building);
             choices.setSelectedItem(building);
         }
 
         private void refresh() {
             Building previous = selected();
-            String filter = query.getText().strip().toLowerCase(Locale.ROOT);
+            String filter = PlaceService.nameKey(query.getText());
             choices.removeAllItems();
             choices.addItem(null);
             for (Building building : buildings) {
-                if (building.name().toLowerCase(Locale.ROOT).contains(filter)) choices.addItem(building);
+                if (PlaceService.nameKey(building.name()).contains(filter)) choices.addItem(building);
             }
-            if (previous != null && previous.name().toLowerCase(Locale.ROOT).contains(filter)) {
+            if (previous != null && PlaceService.nameKey(previous.name()).contains(filter)) {
+                if (!buildings.contains(previous)) choices.addItem(previous);
                 choices.setSelectedItem(previous);
             } else if (choices.getItemCount() == 2) {
                 choices.setSelectedIndex(1);
